@@ -7,7 +7,8 @@
 ############################################################
 
 from io import StringIO
-from PyQt4 import QtCore
+from types import SimpleNamespace
+from PyQt6 import QtCore, QtGui, QtWidgets
 from copy import copy
 from ObjectUI import *
 import FlatCAMApp
@@ -15,6 +16,7 @@ import inspect  # TODO: For debugging only.
 from camlib import *
 from FlatCAMCommon import LoudDict
 from FlatCAMDraw import FlatCAMDraw
+import ToolLibrary
 
 
 ########################################
@@ -321,6 +323,24 @@ class FlatCAMObj(QtCore.QObject):
         return
 
 
+def apply_tool_settings(geo_obj, tool):
+    """
+    Sets up a new Geometry object to be cut with a tool chosen in the Tool
+    tab, as returned by ToolLibrary.isolation_settings() and the like.
+    """
+    geo_obj.options["cnctooldia"] = tool["dia"]
+    for option in ("cutz", "feedrate", "feedrate_z", "spindlespeed", "multidepth", "depthperpass"):
+        geo_obj.options[option] = tool[option]
+
+
+def set_job_end(job_obj, end):
+    """
+    Sets how a CNC job finishes, from ToolLibrary.end_settings().
+    """
+    job_obj.z_end = end["z_end"]
+    job_obj.return_to_origin = end["return_to_origin"]
+
+
 class FlatCAMGerber(FlatCAMObj, Gerber):
     """
     Represents Gerber code.
@@ -408,6 +428,36 @@ class FlatCAMGerber(FlatCAMObj, Gerber):
         self.ui.generate_bb_button.clicked.connect(self.on_generatebb_button_click)
         self.ui.generate_noncopper_button.clicked.connect(self.on_generatenoncopper_button_click)
 
+    def build_ui(self):
+        FlatCAMObj.build_ui(self)
+        self.show_tool_library()
+
+    def show_tool_library(self):
+        """
+        Shows the isolation and board outline tools chosen in the Tool tab
+        on the form, and locks their diameters.
+        """
+        if self.ui is None:
+            return
+        library = self.app.tool_library
+        used = []
+        for option, label, tool in (
+                ("isotooldia", "Isolation", library.isolation_settings(self.units)),
+                ("cutouttooldia", "Board cutout", library.outline_settings(self.units))):
+            field = self.form_fields[option]
+            if tool is None:
+                field.setEnabled(True)
+                field.setToolTip("Diameter of the cutting tool.")
+            else:
+                self.options[option] = tool["dia"]
+                self.set_form_item(option)
+                field.setEnabled(False)
+                field.setToolTip("Cut width of %s, chosen in the Tool tab." % tool["name"])
+                used.append("%s: %s" % (label, tool["name"]))
+        self.ui.tool_library_label.setText(
+            "Tools from the Tool tab — " + "; ".join(used) if used else "")
+        self.ui.tool_library_label.setVisible(bool(used))
+
     def on_generatenoncopper_button_click(self, *args):
         self.app.report_usage("gerber_on_generatenoncopper_button")
 
@@ -445,7 +495,15 @@ class FlatCAMGerber(FlatCAMObj, Gerber):
         self.read_form()
         name = self.options["name"] + "_cutout"
 
+        tool = self.app.tool_library.outline_settings(self.units)
+        if tool is not None:
+            self.options["cutouttooldia"] = tool["dia"]
+            self.set_form_item("cutouttooldia")
+
         def geo_init(geo_obj, app_obj):
+            geo_obj.options["cnctooldia"] = self.options["cutouttooldia"]
+            if tool is not None:
+                apply_tool_settings(geo_obj, tool)
             margin = self.options["cutoutmargin"] + self.options["cutouttooldia"]/2
             gap_size = self.options["cutoutgapsize"] + self.options["cutouttooldia"]
             minx, miny, maxx, maxy = self.bounds()
@@ -477,7 +535,7 @@ class FlatCAMGerber(FlatCAMObj, Gerber):
                            [pts[6], pts[7], pts[8]],
                            [pts[9], pts[10], pts[11]]]}
             cuts = cases[self.options['gaps']]
-            geo_obj.solid_geometry = cascaded_union([LineString(segment) for segment in cuts])
+            geo_obj.solid_geometry = unary_union([LineString(segment) for segment in cuts])
 
         # TODO: Check for None
         self.app.new_object("geometry", name, geo_init)
@@ -516,6 +574,11 @@ class FlatCAMGerber(FlatCAMObj, Gerber):
         :param outname: Base name of the output object
         :return: None
         """
+        # Use the tool chosen in the Tool tab, unless given a diameter
+        tool = self.app.tool_library.isolation_settings(self.units) if dia is None else None
+        if tool is not None:
+            self.options["isotooldia"] = tool["dia"]
+            self.set_form_item("isotooldia")
         if dia is None:
             dia = self.options["isotooldia"]
         if passes is None:
@@ -541,13 +604,13 @@ class FlatCAMGerber(FlatCAMObj, Gerber):
             if invert:
                 if type(geom) is MultiPolygon:
                     pl = []
-                    for p in geom:
+                    for p in geom.geoms:
                         pl.append(Polygon(p.exterior.coords[::-1], p.interiors))
                     geom = MultiPolygon(pl)
                 elif type(geom) is Polygon:
                     geom = Polygon(geom.exterior.coords[::-1], geom.interiors)
                 else:
-                    raise str("Unexpected Geometry")
+                    raise TypeError("Unexpected Geometry")
             return geom
 
         if combine:
@@ -557,6 +620,8 @@ class FlatCAMGerber(FlatCAMObj, Gerber):
             def iso_init(geo_obj, app_obj):
                 # Propagate options
                 geo_obj.options["cnctooldia"] = self.options["isotooldia"]
+                if tool is not None:
+                    apply_tool_settings(geo_obj, tool)
                 geo_obj.solid_geometry = []
                 for i in range(passes):
                     offset = (2 * i + 1) / 2.0 * dia - i * overlap * dia
@@ -580,6 +645,8 @@ class FlatCAMGerber(FlatCAMObj, Gerber):
                 def iso_init(geo_obj, app_obj):
                     # Propagate options
                     geo_obj.options["cnctooldia"] = self.options["isotooldia"]
+                    if tool is not None:
+                        apply_tool_settings(geo_obj, tool)
                     geo_obj.solid_geometry = generate_envelope (offset, i == 0)
                     app_obj.inform.emit("Isolation geometry created: %s" % geo_obj.options["name"])
 
@@ -632,13 +699,7 @@ class FlatCAMGerber(FlatCAMObj, Gerber):
         if not FlatCAMObj.plot(self):
             return
 
-        geometry = self.solid_geometry
-
-        # Make sure geometry is iterable.
-        try:
-            _ = iter(geometry)
-        except TypeError:
-            geometry = [geometry]
+        geometry = autolist(self.solid_geometry)
 
         if self.options["multicolored"]:
             linespec = '-'
@@ -712,72 +773,72 @@ class FlatCAMExcellon(FlatCAMObj, Excellon):
     @staticmethod
     def merge(exc_list, exc_final):
         """
-        Merge excellons in exc_list into exc_final.
-        Options are allways copied from source .
+        Merges the Excellon objects in exc_list (and any holes already in
+        exc_final) into exc_final, grouping the holes by diameter: holes of
+        the same size from any source share one tool, and tools are numbered
+        1, 2, ... in order of size. Exact duplicate holes are dropped.
+        Options are copied from the sources.
 
-        Tools are also merged, if  name for  tool is same and   size differs, then as name is used next available  number from both lists
-
-        if only one object is  specified in exc_list then this acts  as copy only
+        If only one object is given, this makes a copy of it.
 
         :param exc_list: List or one object of FlatCAMExcellon Objects to join.
         :param exc_final: Destination FlatCAMExcellon object.
         :return: None
         """
 
-        if type(exc_list) is not list:
-            exc_list_real= list()
-            exc_list_real.append(exc_list)
-        else:
-            exc_list_real=exc_list
+        def flatten(items):
+            for item in (items if type(items) is list else [items]):
+                if type(item) is list:
+                    yield from flatten(item)
+                else:
+                    yield item
 
-        for exc in exc_list_real:
-            # Expand lists
-            if type(exc) is list:
-                FlatCAMExcellon.merge(exc, exc_final)
-            # If not list, merge excellons
-            else:
+        sources = list(flatten(exc_list))
 
-                #    TODO: I realize forms does not save values into options , when  object is deselected
-                #    leave this  here for future use
-                #    this  reinitialize options based on forms, all steps may not be necessary
-                #    exc.app.collection.set_active(exc.options['name'])
-                #    exc.to_form()
-                #    exc.read_form()
-                for option in exc.options:
-                    if option is not 'name':
-                        try:
-                            exc_final.options[option] = exc.options[option]
-                        except:
-                            exc.app.log.warning("Failed to copy option.",option)
+        # (diameter, point) of every hole, in exc_final's units
+        holes = [(exc_final.tools[d["tool"]]["C"], d["point"]) for d in exc_final.drills]
+        for exc in sources:
+            #    TODO: I realize forms does not save values into options , when  object is deselected
+            #    leave this  here for future use
+            #    this  reinitialize options based on forms, all steps may not be necessary
+            #    exc.app.collection.set_active(exc.options['name'])
+            #    exc.to_form()
+            #    exc.read_form()
+            for option in exc.options:
+                if option != 'name':
+                    try:
+                        exc_final.options[option] = exc.options[option]
+                    except:
+                        exc.app.log.warning("Failed to copy option: %s" % option)
 
-                #deep copy of all drills,to avoid any references
-                for drill in exc.drills:
-                    point = Point(drill['point'].x,drill['point'].y)
-                    exc_final.drills.append({"point": point, "tool": drill['tool']})
-                toolsrework=dict()
-                max_numeric_tool=0
-                for toolname in list(exc.tools.copy().keys()):
-                    numeric_tool=int(toolname)
-                    if numeric_tool>max_numeric_tool:
-                        max_numeric_tool=numeric_tool
-                    toolsrework[exc.tools[toolname]['C']]=toolname
+            factor = 1.0
+            if exc.units.upper() != exc_final.units.upper():
+                factor = 25.4 if exc_final.units.upper() == "MM" else 1 / 25.4
+            for drill in exc.drills:
+                point = Point(drill['point'].x * factor, drill['point'].y * factor)
+                holes.append((exc.tools[drill['tool']]['C'] * factor, point))
+            exc_final.zeros = exc.zeros
 
-                #exc_final as last because names from final tools will be used
-                for toolname in list(exc_final.tools.copy().keys()):
-                    numeric_tool=int(toolname)
-                    if numeric_tool>max_numeric_tool:
-                        max_numeric_tool=numeric_tool
-                    toolsrework[exc_final.tools[toolname]['C']]=toolname
+        # One tool per diameter. Sizes are compared rounded, so the same drill
+        # size read from different files or units still matches.
+        def size_key(dia):
+            return round(dia, 6)
 
-                for toolvalues in list(toolsrework.copy().keys()):
-                    if toolsrework[toolvalues] in exc_final.tools:
-                        if exc_final.tools[toolsrework[toolvalues]]!={"C": toolvalues}:
-                            exc_final.tools[str(max_numeric_tool+1)]={"C": toolvalues}
-                    else:
-                        exc_final.tools[toolsrework[toolvalues]]={"C": toolvalues}
-                #this value  was not co
-                exc_final.zeros=exc.zeros
-                exc_final.create_geometry()
+        sizes = sorted({size_key(dia): dia for dia, _ in holes}.items())
+        tool_for = {key: str(n) for n, (key, _) in enumerate(sizes, 1)}
+        exc_final.tools = {tool_for[key]: {"C": dia} for key, dia in sizes}
+
+        exc_final.drills = []
+        seen = set()
+        for dia, point in holes:
+            tool = tool_for[size_key(dia)]
+            where = (tool, round(point.x, 6), round(point.y, 6))
+            if where in seen:
+                continue  # The same hole in two files
+            seen.add(where)
+            exc_final.drills.append({"point": point, "tool": tool})
+
+        exc_final.create_geometry()
 
     def build_ui(self):
         FlatCAMObj.build_ui(self)
@@ -798,13 +859,13 @@ class FlatCAMExcellon(FlatCAMObj, Excellon):
                 if drill.get('tool') == tool:
                     drill_cnt += 1
 
-            id = QtGui.QTableWidgetItem(tool)
-            id.setFlags(QtCore.Qt.ItemIsSelectable | QtCore.Qt.ItemIsEnabled)
+            id = QtWidgets.QTableWidgetItem(tool)
+            id.setFlags(QtCore.Qt.ItemFlag.ItemIsSelectable | QtCore.Qt.ItemFlag.ItemIsEnabled)
             self.ui.tools_table.setItem(i, 0, id)  # Tool name/id
-            dia = QtGui.QTableWidgetItem(str(self.tools[tool]['C']))
-            dia.setFlags(QtCore.Qt.ItemIsEnabled)
-            drill_count = QtGui.QTableWidgetItem('%d' % drill_cnt)
-            drill_count.setFlags(QtCore.Qt.ItemIsEnabled)
+            dia = QtWidgets.QTableWidgetItem(str(self.tools[tool]['C']))
+            dia.setFlags(QtCore.Qt.ItemFlag.ItemIsEnabled)
+            drill_count = QtWidgets.QTableWidgetItem('%d' % drill_cnt)
+            drill_count.setFlags(QtCore.Qt.ItemFlag.ItemIsEnabled)
             self.ui.tools_table.setItem(i, 1, dia)  # Diameter
             self.ui.tools_table.setItem(i, 2, drill_count)  # Number of drills per tool
             i += 1
@@ -817,12 +878,78 @@ class FlatCAMExcellon(FlatCAMObj, Excellon):
         self.ui.tools_table.resizeColumnsToContents()
         self.ui.tools_table.resizeRowsToContents()
         horizontal_header = self.ui.tools_table.horizontalHeader()
-        horizontal_header.setResizeMode(0, QtGui.QHeaderView.ResizeToContents)
-        horizontal_header.setResizeMode(1, QtGui.QHeaderView.Stretch)
-        horizontal_header.setResizeMode(2, QtGui.QHeaderView.ResizeToContents)
+        horizontal_header.setSectionResizeMode(0, QtWidgets.QHeaderView.ResizeMode.ResizeToContents)
+        horizontal_header.setSectionResizeMode(1, QtWidgets.QHeaderView.ResizeMode.Stretch)
+        horizontal_header.setSectionResizeMode(2, QtWidgets.QHeaderView.ResizeMode.ResizeToContents)
         # horizontal_header.setStretchLastSection(True)
         self.ui.tools_table.verticalHeader().hide()
         self.ui.tools_table.setSortingEnabled(True)
+
+        self.show_tool_library()
+
+    def drill_bit_plan(self, drilling, tools=None):
+        """
+        Picks a drill bit for each Excellon tool (hole size).
+
+        :param drilling: As returned by ToolLibrary.drilling_settings().
+        :param tools: Excellon tool names. All by default.
+        :return: ({tool name: bit}, [warnings for holes far from their bit's size])
+        """
+        if tools is None:
+            tools = list(self.tools)
+        tolerance = ToolLibrary.from_mm(ToolLibrary.DRILL_TOLERANCE, self.units)
+        plan = {}
+        warnings = []
+        for tool in tools:
+            hole = self.tools[tool]["C"]
+            bit = ToolLibrary.ToolLibrary.match_drill_bit(hole, drilling["bits"])
+            plan[tool] = bit
+            if abs(bit["dia"] - hole) > tolerance:
+                warnings.append("%.4f holes (T%s) with %s" % (hole, tool, bit["name"]))
+        return plan, warnings
+
+    def show_tool_library(self):
+        """
+        Shows the drill bits chosen in the Tool tab: one per hole size in the
+        tools table. Cut Z, feed rate and spindle speed then come from the
+        Tool tab.
+        """
+        if self.ui is None:
+            return
+        drilling = self.app.tool_library.drilling_settings(self.units)
+        table = self.ui.tools_table
+        sorting = table.isSortingEnabled()
+        table.setSortingEnabled(False)
+
+        if drilling is None:
+            table.setColumnCount(3)
+        else:
+            table.setColumnCount(4)
+            table.setHorizontalHeaderItem(3, QtWidgets.QTableWidgetItem("Drill bit"))
+            plan, _ = self.drill_bit_plan(drilling)
+            tolerance = ToolLibrary.from_mm(ToolLibrary.DRILL_TOLERANCE, self.units)
+            for row in range(table.rowCount()):
+                tool = table.item(row, 0).text()
+                bit = plan[tool]
+                item = QtWidgets.QTableWidgetItem(bit["name"])
+                item.setFlags(QtCore.Qt.ItemFlag.ItemIsEnabled)
+                if abs(bit["dia"] - self.tools[tool]["C"]) > tolerance:
+                    item.setForeground(QtGui.QColor("red"))
+                    item.setToolTip("No drill bit within %.4f of this hole size." % tolerance)
+                table.setItem(row, 3, item)
+            table.horizontalHeader().setSectionResizeMode(
+                3, QtWidgets.QHeaderView.ResizeMode.ResizeToContents)
+        table.setSortingEnabled(sorting)
+
+        for field in (self.ui.cutz_entry, self.ui.feedrate_entry, self.ui.spindlespeed_entry):
+            field.setEnabled(drilling is None)
+        if drilling is None:
+            self.ui.tool_library_label.setVisible(False)
+        else:
+            self.ui.tool_library_label.setText(
+                "Drilling with the drill bits from the Tool tab, which set\n"
+                "Cut Z (%.4f), feed rate and spindle speed." % drilling["cutz"])
+            self.ui.tool_library_label.setVisible(True)
 
     def set_ui(self, ui):
         """
@@ -864,7 +991,10 @@ class FlatCAMExcellon(FlatCAMObj, Excellon):
         :return: List of tools.
         :rtype: list
         """
-        return [str(x.text()) for x in self.ui.tools_table.selectedItems()]
+        # By row, as any of a row's cells can be the selected one
+        table = self.ui.tools_table
+        rows = sorted({index.row() for index in table.selectedIndexes()})
+        return [table.item(row, 0).text() for row in rows]
 
     def generate_milling(self, tools=None, outname=None, tooldia=None):
         """
@@ -956,6 +1086,28 @@ class FlatCAMExcellon(FlatCAMObj, Excellon):
 
         job_name = self.options["name"] + "_cnc"
 
+        source = self
+        toolchange = self.options["toolchange"]
+        tool_params = None
+        drilling = self.app.tool_library.drilling_settings(self.units)
+        if drilling is not None:
+            # Regroup the holes by the drill bit from the Tool tab that will make them,
+            # numbering the bits from 1 by size.
+            plan, warnings = self.drill_bit_plan(drilling, tools)
+            bits = sorted({b["id"]: b for b in plan.values()}.values(), key=lambda b: b["dia"])
+            slot = {b["id"]: str(n) for n, b in enumerate(bits, 1)}
+            source = SimpleNamespace(
+                tools={slot[b["id"]]: {"C": b["dia"]} for b in bits},
+                drills=[{"point": d["point"], "tool": slot[plan[d["tool"]]["id"]]}
+                        for d in self.drills if d["tool"] in plan])
+            tool_params = {slot[b["id"]]: b for b in bits}
+            tools = [slot[b["id"]] for b in bits]
+            if len(bits) > 1 and not toolchange:
+                toolchange = True
+                self.app.inform.emit("Tool change turned on: drilling needs %d drill bits." % len(bits))
+            if warnings:
+                self.app.inform.emit("[warning] No drill bit close in size for: " + "; ".join(warnings))
+
         # Object initialization function for app.new_object()
         def job_init(job_obj, app_obj):
             assert isinstance(job_obj, FlatCAMCNCjob), \
@@ -966,14 +1118,21 @@ class FlatCAMExcellon(FlatCAMObj, Excellon):
             job_obj.z_move = self.options["travelz"]
             job_obj.feedrate = self.options["feedrate"]
             job_obj.spindlespeed = self.options["spindlespeed"]
+            set_job_end(job_obj, self.app.tool_library.end_settings(self.units))
+            if drilling is not None:
+                first = tool_params[tools[0]]
+                job_obj.z_cut = drilling["cutz"]
+                job_obj.feedrate = first["feedrate"]
+                job_obj.spindlespeed = first["spindlespeed"] or self.options["spindlespeed"]
             # There could be more than one drill size...
             # job_obj.tooldia =   # TODO: duplicate variable!
             # job_obj.options["tooldia"] =
 
             tools_csv = ','.join(tools)
-            job_obj.generate_from_excellon_by_tool(self, tools_csv,
-                                                   toolchange=self.options["toolchange"],
-                                                   toolchangez=self.options["toolchangez"])
+            job_obj.generate_from_excellon_by_tool(source, tools_csv,
+                                                   toolchange=toolchange,
+                                                   toolchangez=self.options["toolchangez"],
+                                                   tool_params=tool_params)
 
             app_obj.progress.emit(50)
             job_obj.gcode_parse()
@@ -1021,10 +1180,7 @@ class FlatCAMExcellon(FlatCAMObj, Excellon):
         if not FlatCAMObj.plot(self):
             return
 
-        try:
-            _ = iter(self.solid_geometry)
-        except TypeError:
-            self.solid_geometry = [self.solid_geometry]
+        self.solid_geometry = autolist(self.solid_geometry)
 
         # Plot excellon (All polygons?)
         if self.options["solid"]:
@@ -1117,10 +1273,11 @@ class FlatCAMCNCjob(FlatCAMObj, CNCjob):
         self.read_form()
 
         try:
-            filename = str(QtGui.QFileDialog.getSaveFileName(caption="Export G-Code ...",
-                                                         directory=self.app.defaults["last_folder"]))
+            filename, _ = QtWidgets.QFileDialog.getSaveFileName(caption="Export G-Code ...",
+                                                                directory=self.app.defaults["last_folder"])
         except TypeError:
-            filename = str(QtGui.QFileDialog.getSaveFileName(caption="Export G-Code ..."))
+            filename, _ = QtWidgets.QFileDialog.getSaveFileName(caption="Export G-Code ...")
+        filename = str(filename)
 
         preamble = str(self.ui.prepend_text.get_value())
         postamble = str(self.ui.append_text.get_value())
@@ -1159,8 +1316,6 @@ class FlatCAMCNCjob(FlatCAMObj, CNCjob):
                 bufline = "G4 P{}\n".format(self.options['dwelltime'])
 
             yield line
-
-        raise StopIteration
 
     def export_gcode(self, filename, preamble='', postamble='', processor=''):
 
@@ -1266,6 +1421,7 @@ class FlatCAMGeometry(FlatCAMObj, Geometry):
             "cutz": -0.002,
             "travelz": 0.1,
             "feedrate": 5.0,
+            "feedrate_z": None,  # Plunge rate. None: the feed rate
             "spindlespeed": None,
             "cnctooldia": 0.4 / 25.4,
             "painttooldia": 0.0625,
@@ -1300,6 +1456,7 @@ class FlatCAMGeometry(FlatCAMObj, Geometry):
             "cutz": self.ui.cutz_entry,
             "travelz": self.ui.travelz_entry,
             "feedrate": self.ui.cncfeedrate_entry,
+            "feedrate_z": self.ui.cncplunge_entry,
             "spindlespeed": self.ui.cncspindlespeed_entry,
             "cnctooldia": self.ui.cnctooldia_entry,
             "painttooldia": self.ui.painttooldia_entry,
@@ -1447,14 +1604,11 @@ class FlatCAMGeometry(FlatCAMObj, Geometry):
         #       early if it finds something that is not a Polygon?
         def recurse(geo):
             try:
-                for subg in geo:
-                    for subsubg in recurse(subg):
-                        yield subsubg
+                for subg in iter_geometry(geo):
+                    yield from recurse(subg)
             except TypeError:
                 if isinstance(geo, Polygon):
                     yield geo
-
-            raise StopIteration
 
         # Initializes the new geometry object
         def gen_paintarea(geo_obj, app_obj):
@@ -1523,6 +1677,7 @@ class FlatCAMGeometry(FlatCAMObj, Geometry):
                        feedrate=None,
                        tooldia=None,
                        outname=None,
+                       feedrate_z=None,
                        spindlespeed=None,
                        multidepth=None,
                        depthperpass=None,
@@ -1535,6 +1690,7 @@ class FlatCAMGeometry(FlatCAMObj, Geometry):
         :param z_cut: Cut depth (negative)
         :param z_move: Hight of the tool when travelling (not cutting)
         :param feedrate: Feed rate while cutting
+        :param feedrate_z: Feed rate moving down into the material (None: feedrate)
         :param tooldia: Tool diameter
         :param outname: Name of the new object
         :param spindlespeed: Spindle speed (RPM)
@@ -1545,6 +1701,7 @@ class FlatCAMGeometry(FlatCAMObj, Geometry):
         z_cut = z_cut if z_cut is not None else self.options["cutz"]
         z_move = z_move if z_move is not None else self.options["travelz"]
         feedrate = feedrate if feedrate is not None else self.options["feedrate"]
+        feedrate_z = feedrate_z if feedrate_z is not None else self.options["feedrate_z"]
         tooldia = tooldia if tooldia is not None else self.options["cnctooldia"]
         multidepth = multidepth if multidepth is not None else self.options["multidepth"]
         depthperpass = depthperpass if depthperpass is not None else self.options["depthperpass"]
@@ -1574,7 +1731,10 @@ class FlatCAMGeometry(FlatCAMObj, Geometry):
             job_obj.z_cut = z_cut
             job_obj.z_move = z_move
             job_obj.feedrate = feedrate
+            if feedrate_z is not None:
+                job_obj.zdownrate = feedrate_z
             job_obj.spindlespeed = spindlespeed
+            set_job_end(job_obj, self.app.tool_library.end_settings(self.units))
             app_obj.progress.emit(40)
             # TODO: The tolerance should not be hard coded. Just for testing.
             job_obj.generate_from_geometry_2(self,
@@ -1655,6 +1815,8 @@ class FlatCAMGeometry(FlatCAMObj, Geometry):
         self.options['cutz'] *= factor
         self.options['travelz'] *= factor
         self.options['feedrate'] *= factor
+        if self.options['feedrate_z'] is not None:
+            self.options['feedrate_z'] *= factor
         self.options['cnctooldia'] *= factor
         self.options['painttooldia'] *= factor
         self.options['paintmargin'] *= factor
@@ -1663,7 +1825,7 @@ class FlatCAMGeometry(FlatCAMObj, Geometry):
 
     def plot_element(self, element):
         try:
-            for sub_el in element:
+            for sub_el in iter_geometry(element):
                 self.plot_element(sub_el)
 
         except TypeError:  # Element is not iterable...

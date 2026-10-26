@@ -1,0 +1,75 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "FlatCAM"
+version = "8.5"
+description = "2D Computer-Aided PCB Manufacturing"
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Juan Pablo Caram" }]
+requires-python = ">=3.10"
+dependencies = [
+    "PyQt6>=6.5",
+    "numpy>=2.0",
+    "matplotlib>=3.8",
+    "shapely>=2.0",
+    "rtree>=1.0",
+    "svg.path>=4.0",
+    "simplejson",
+]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.14",
+    "Environment :: X11 Applications :: Qt",
+    "Topic :: Scientific/Engineering :: Electronic Design Automation (EDA)",
+]
+
+[project.optional-dependencies]
+test = ["pytest>=8"]
+
+[project.urls]
+Homepage = "http://flatcam.org/"
+
+[project.gui-scripts]
+flatcam = "FlatCAM:main"
+
+[tool.setuptools]
+packages = ["descartes", "tclCommands"]
+py-modules = [
+    "camlib",
+    "FlatCAM",
+    "FlatCAMApp",
+    "FlatCAMCommon",
+    "FlatCAMDraw",
+    "FlatCAMGUI",
+    "FlatCAMObj",
+    "FlatCAMProcess",
+    "FlatCAMShell",
+    "FlatCAMTool",
+    "FlatCAMVersion",
+    "FlatCAMWorker",
+    "GUIElements",
+    "ObjectCollection",
+    "ObjectUI",
+    "PlotCanvas",
+    "svgparse",
+    "termwidget",
+    "ToolDblSided",
+    "ToolLibrary",
+    "ToolMeasurement",
+    "ToolTransform",
+]
+include-package-data = true
+
+[tool.setuptools.data-files]
+"share/flatcam" = ["share/*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests", "descartes/tests.py"]
+python_files = ["test_*.py", "tests.py"]
+# test_tclCommands holds helpers meant to be mixed into test_tcl_shell, not
+# standalone tests; the other folders are manual profiling/experiment scripts.
+norecursedirs = ["test_tclCommands", "other", "canvas", "*_profiling"]

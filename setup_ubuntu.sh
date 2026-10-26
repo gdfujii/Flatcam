@@ -1,21 +1,13 @@
 #!/bin/sh -e
 # "-e" exists on first error.
 
-sudo apt-get install libpng-dev \
-                libfreetype6 \
-				libfreetype6-dev \
-				python3-dev \
-				python3-simplejson \
-				python3-pyqt4 \
-				python3-numpy \
-				python3-scipy \
-				python3-matplotlib \
-				libgeos-dev \
-				python-shapely \
-				python-pip \
-				libspatialindex-dev \
+# System libraries and Tcl/Tk (FlatCAM's shell uses tkinter's Tcl interpreter).
+sudo apt-get install python3-dev \
+				python3-venv \
 				python3-tk \
-				python3-shapely \
-				python3-rtree \
-				python3-svg.path
+				libgeos-dev \
+				libspatialindex-dev
 
+# Python dependencies, in a virtual environment.
+python3 -m venv .venv
+.venv/bin/pip install -r requirements.txt

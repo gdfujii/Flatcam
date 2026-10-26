@@ -1,6 +1,12 @@
 from shapely.geometry import *
 import unittest
 
+
+def ring_vertex_count(geom):
+    # Vertex count depends on GEOS buffer tessellation, so derive it from the geometry
+    polygon = shape(geom)
+    return sum(len(r.coords) for r in [polygon.exterior, *polygon.interiors])
+
 from descartes.patch import PolygonPatch
 
 class PolygonTestCase(unittest.TestCase):
@@ -11,7 +17,7 @@ class PolygonTestCase(unittest.TestCase):
         self.assertEqual(str(type(patch)), 
             "<class 'matplotlib.patches.PathPatch'>")
         path = patch.get_path()
-        self.assertTrue(len(path.vertices) == len(path.codes) == 198)
+        self.assertTrue(len(path.vertices) == len(path.codes) == ring_vertex_count(self.polygon))
 
 class JSONPolygonTestCase(unittest.TestCase):
     polygon = Point(0, 0).buffer(10.0).difference(
@@ -22,7 +28,7 @@ class JSONPolygonTestCase(unittest.TestCase):
         self.assertEqual(str(type(patch)), 
             "<class 'matplotlib.patches.PathPatch'>")
         path = patch.get_path()
-        self.assertTrue(len(path.vertices) == len(path.codes) == 198)
+        self.assertTrue(len(path.vertices) == len(path.codes) == ring_vertex_count(self.polygon))
 
 class GeoInterfacePolygonTestCase(unittest.TestCase):
     class GeoThing:
@@ -35,4 +41,4 @@ class GeoInterfacePolygonTestCase(unittest.TestCase):
         self.assertEqual(str(type(patch)), 
             "<class 'matplotlib.patches.PathPatch'>")
         path = patch.get_path()
-        self.assertTrue(len(path.vertices) == len(path.codes) == 198)
+        self.assertTrue(len(path.vertices) == len(path.codes) == ring_vertex_count(self.thing.__geo_interface__))

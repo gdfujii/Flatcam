@@ -76,7 +76,9 @@ class TclCommandGeoCutout(TclCommandSignaled):
         py = 0.5 * (ymin + ymax)
         lenghtx = (xmax - xmin)
         lenghty = (ymax - ymin)
-        gapsize = args['gapsize'] + args['dia'] / 2
+        # Half-width of each rectangle cut from the toolpath: half the gap left
+        # in the material, plus the tool radius on each side
+        gapsize = args['gapsize'] / 2 + args['dia'] / 2
 
         if args['gaps'] == '8' or args['gaps'] == '2lr':
             subtract_rectangle(obj,

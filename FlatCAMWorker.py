@@ -6,7 +6,7 @@
 # MIT Licence                                              #
 ############################################################
 
-from PyQt4 import QtCore
+from PyQt6 import QtCore, QtGui, QtWidgets
 
 
 class Worker(QtCore.QObject):

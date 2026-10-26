@@ -1,3 +1,4 @@
+import importlib
 import pkgutil
 import sys
 
@@ -52,8 +53,8 @@ import tclCommands.TclCommandWriteGCode
 
 __all__ = []
 
-for loader, name, is_pkg in pkgutil.walk_packages(__path__):
-    module = loader.find_module(name).load_module(name)
+for _, name, is_pkg in pkgutil.iter_modules(__path__):
+    importlib.import_module(__name__ + '.' + name)
     __all__.append(name)
 
 

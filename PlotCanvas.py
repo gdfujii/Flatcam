@@ -6,15 +6,16 @@
 # MIT Licence                                              #
 ############################################################
 
-from PyQt4 import QtGui, QtCore
+from PyQt6 import QtCore, QtGui, QtWidgets
 
 # Prevent conflict with Qt5 and above.
 from matplotlib import use as mpl_use
-mpl_use("Qt4Agg")
+mpl_use("QtAgg")
 
 from matplotlib.figure import Figure
-from matplotlib.backends.backend_qt4agg import FigureCanvasQTAgg as FigureCanvas
+from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.backends.backend_agg import FigureCanvasAgg
+import numpy as np
 import FlatCAMApp
 import logging
 
@@ -143,16 +144,31 @@ class PlotCanvas(QtCore.QObject):
 
         # The canvas is the top level container (FigureCanvasQTAgg)
         self.canvas = FigureCanvas(self.figure)
-        # self.canvas.setFocusPolicy(QtCore.Qt.ClickFocus)
+        # self.canvas.setFocusPolicy(QtCore.Qt.FocusPolicy.ClickFocus)
         # self.canvas.setFocus()
 
         #self.canvas.set_hexpand(1)
         #self.canvas.set_vexpand(1)
         #self.canvas.set_can_focus(True)  # For key press
 
+        # Scroll bars to pan across everything that has been plotted
+        self.hscrollbar = QtWidgets.QScrollBar(QtCore.Qt.Orientation.Horizontal)
+        self.vscrollbar = QtWidgets.QScrollBar(QtCore.Qt.Orientation.Vertical)
+        self.hscrollbar.valueChanged.connect(self.on_scrollbar_change)
+        self.vscrollbar.valueChanged.connect(self.on_scrollbar_change)
+        self.scene = None  # (xmin, ymin, xmax, ymax) the scroll bars cover
+        self.updating_scrollbars = False
+
         # Attach to parent
         #self.container.attach(self.canvas, 0, 0, 600, 400)  # TODO: Height and width are num. columns??
-        self.container.addWidget(self.canvas)  # Qt
+        self.canvas_area = QtWidgets.QWidget()
+        canvas_grid = QtWidgets.QGridLayout(self.canvas_area)
+        canvas_grid.setContentsMargins(0, 0, 0, 0)
+        canvas_grid.setSpacing(0)
+        canvas_grid.addWidget(self.canvas, 0, 0)
+        canvas_grid.addWidget(self.vscrollbar, 0, 1)
+        canvas_grid.addWidget(self.hscrollbar, 1, 0)
+        self.container.addWidget(self.canvas_area)  # Qt
 
         # Copy a bitmap of the canvas for quick animation.
         # Update every time the canvas is re-drawn.
@@ -162,8 +178,7 @@ class PlotCanvas(QtCore.QObject):
         self.cache = CanvasCache(self, self.app)
         self.cache_thread = QtCore.QThread()
         self.cache.moveToThread(self.cache_thread)
-        super(PlotCanvas, self).connect(self.cache_thread, QtCore.SIGNAL("started()"), self.cache.run)
-        # self.connect()
+        self.cache_thread.started.connect(self.cache.run)
         self.cache_thread.start()
         self.cache.new_screen.connect(self.on_new_screen)
 
@@ -494,6 +509,96 @@ class PlotCanvas(QtCore.QObject):
 
         # Store background on canvas redraw
         self.background = self.canvas.copy_from_bbox(self.axes.bbox)
+
+        # Every change of view ends in a redraw
+        self.update_scrollbars()
+
+    # Scroll bar positions per visible width/height of the plot
+    SCROLL_STEPS = 1000
+
+    def get_content_bounds(self):
+        """
+        Extents of everything plotted, as (xmin, ymin, xmax, ymax), or None
+        if nothing is.
+        """
+        bounds = None
+        for ax in self.figure.get_axes():
+            if ax._label == 'base':  # Only grid and axis lines
+                continue
+            lim = ax.dataLim
+            if not (np.all(np.isfinite(lim.extents)) and lim.width >= 0 and lim.height >= 0):
+                continue  # Nothing plotted on it
+            if bounds is None:
+                bounds = list(lim.extents)
+            else:
+                bounds = [min(bounds[0], lim.x0), min(bounds[1], lim.y0),
+                          max(bounds[2], lim.x1), max(bounds[3], lim.y1)]
+        return bounds
+
+    def update_scrollbars(self):
+        """
+        Sets the scroll bars to show where the view is within the plotted
+        objects (and the view itself, which may extend beyond them).
+        """
+        xmin, xmax = self.axes.get_xlim()
+        ymin, ymax = self.axes.get_ylim()
+        view_w = xmax - xmin
+        view_h = ymax - ymin
+        if view_w <= 0 or view_h <= 0:
+            return
+
+        scene = [xmin, ymin, xmax, ymax]
+        content = self.get_content_bounds()
+        if content is not None:
+            # Leave a little room around the objects
+            margin = 0.05 * max(content[2] - content[0], content[3] - content[1])
+            scene = [min(scene[0], content[0] - margin), min(scene[1], content[1] - margin),
+                     max(scene[2], content[2] + margin), max(scene[3], content[3] + margin)]
+        if self.scene is not None and (self.hscrollbar.isSliderDown() or self.vscrollbar.isSliderDown()):
+            # Don't let the range change under a dragged slider
+            scene = [min(scene[0], self.scene[0]), min(scene[1], self.scene[1]),
+                     max(scene[2], self.scene[2]), max(scene[3], self.scene[3])]
+        self.scene = scene
+
+        steps = self.SCROLL_STEPS
+        self.updating_scrollbars = True
+        try:
+            for bar, scene_size, view_size, offset in (
+                    (self.hscrollbar, scene[2] - scene[0], view_w, xmin - scene[0]),
+                    # Top of the scroll bar is the top of the plot
+                    (self.vscrollbar, scene[3] - scene[1], view_h, scene[3] - ymax)):
+                bar.setPageStep(steps)
+                bar.setSingleStep(steps // 10)
+                bar.setRange(0, max(0, round((scene_size - view_size) / view_size * steps)))
+                bar.setValue(round(offset / view_size * steps))
+        finally:
+            self.updating_scrollbars = False
+
+    def on_scrollbar_change(self, value):
+        """
+        Pans the view to the scroll bars' positions.
+        """
+        if self.updating_scrollbars or self.scene is None:
+            return
+
+        xmin, xmax = self.axes.get_xlim()
+        ymin, ymax = self.axes.get_ylim()
+        view_w = xmax - xmin
+        view_h = ymax - ymin
+        steps = float(self.SCROLL_STEPS)
+
+        xmin = self.scene[0] + self.hscrollbar.value() / steps * view_w
+        ymax = self.scene[3] - self.vscrollbar.value() / steps * view_h
+
+        for ax in self.figure.get_axes():
+            ax.set_xlim((xmin, xmin + view_w))
+            ax.set_ylim((ymax - view_h, ymax))
+
+        # Async re-draw
+        self.canvas.draw_idle()
+
+        ##### Temporary place-holder for cached update #####
+        self.update_screen_request.emit([0, 0, 0, 0, 0])
 
     def get_axes_pixelsize(self):
         """

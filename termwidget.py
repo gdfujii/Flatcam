@@ -4,10 +4,9 @@ Shows intput and output text. Allows to enter commands. Supports history.
 """
 
 import html
-from PyQt4.QtCore import pyqtSignal, Qt
-from PyQt4.QtGui import QColor, QKeySequence, QLineEdit, QPalette, \
-                        QSizePolicy, QTextCursor, QTextEdit, \
-                        QVBoxLayout, QWidget
+from PyQt6.QtCore import pyqtSignal, Qt
+from PyQt6.QtGui import QColor, QKeySequence, QPalette, QTextCursor
+from PyQt6.QtWidgets import QLineEdit, QSizePolicy, QTextEdit, QVBoxLayout, QWidget
 
 
 class _ExpandableTextEdit(QTextEdit):
@@ -47,12 +46,12 @@ class _ExpandableTextEdit(QTextEdit):
         """
         Catch keyboard events. Process Enter, Up, Down
         """
-        if event.matches(QKeySequence.InsertParagraphSeparator):
+        if event.matches(QKeySequence.StandardKey.InsertParagraphSeparator):
             text = self.toPlainText()
             if self._termWidget.is_command_complete(text):
                 self._termWidget.exec_current_command()
                 return
-        elif event.matches(QKeySequence.MoveToNextLine):
+        elif event.matches(QKeySequence.StandardKey.MoveToNextLine):
             text = self.toPlainText()
             cursor_pos = self.textCursor().position()
             textBeforeEnd = text[cursor_pos:]
@@ -60,7 +59,7 @@ class _ExpandableTextEdit(QTextEdit):
             if len(textBeforeEnd.split('\n')) <= 1:
                 self.historyNext.emit()
                 return
-        elif event.matches(QKeySequence.MoveToPreviousLine):
+        elif event.matches(QKeySequence.StandardKey.MoveToPreviousLine):
             text = self.toPlainText()
             cursor_pos = self.textCursor().position()
             text_before_start = text[:cursor_pos]
@@ -72,8 +71,8 @@ class _ExpandableTextEdit(QTextEdit):
             if line_count <= 1:
                 self.historyPrev.emit()
                 return
-        elif event.matches(QKeySequence.MoveToNextPage) or \
-                event.matches(QKeySequence.MoveToPreviousPage):
+        elif event.matches(QKeySequence.StandardKey.MoveToNextPage) or \
+                event.matches(QKeySequence.StandardKey.MoveToPreviousPage):
             return self._termWidget.browser().keyPressEvent(event)
 
         QTextEdit.keyPressEvent(self, event)
@@ -124,8 +123,8 @@ class TermWidget(QWidget):
         :return: None
         """
 
-        self._edit.setTextColor(Qt.white)
-        self._edit.setTextBackgroundColor(Qt.darkGreen)
+        self._edit.setTextColor(Qt.GlobalColor.white)
+        self._edit.setTextBackgroundColor(Qt.GlobalColor.darkGreen)
         if detail is None:
             self._edit.setPlainText("...proccessing...")
         else:
@@ -139,8 +138,8 @@ class TermWidget(QWidget):
         :return:
         """
 
-        self._edit.setTextColor(Qt.black)
-        self._edit.setTextBackgroundColor(Qt.white)
+        self._edit.setTextColor(Qt.GlobalColor.black)
+        self._edit.setTextBackgroundColor(Qt.GlobalColor.white)
         self._edit.setPlainText('')
         self._edit.setDisabled(False)
         self._edit.setFocus()
@@ -165,7 +164,7 @@ class TermWidget(QWidget):
         old_value = scrollbar.value()
         scrollattheend = old_value == scrollbar.maximum()
 
-        self._browser.moveCursor(QTextCursor.End)
+        self._browser.moveCursor(QTextCursor.MoveOperation.End)
         self._browser.insertHtml(text)
 
         """TODO When user enters second line to the input, and input is resized, scrollbar changes its positon
@@ -240,7 +239,7 @@ class TermWidget(QWidget):
         if (self._historyIndex + 1) < len(self._history):
             self._historyIndex += 1
             self._edit.setPlainText(self._history[self._historyIndex])
-            self._edit.moveCursor(QTextCursor.End)
+            self._edit.moveCursor(QTextCursor.MoveOperation.End)
 
     def _on_history_prev(self):
         """
@@ -251,4 +250,4 @@ class TermWidget(QWidget):
                 self._history[-1] = self._edit.toPlainText()
             self._historyIndex -= 1
             self._edit.setPlainText(self._history[self._historyIndex])
-            self._edit.moveCursor(QTextCursor.End)
+            self._edit.moveCursor(QTextCursor.MoveOperation.End)

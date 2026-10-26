@@ -28,6 +28,12 @@ class Polygon(object):
         return value
 
 
+def _coords(ob):
+    # Shapely 2 rings are not sequences; use their coordinate arrays instead
+    coords = getattr(ob, 'coords', None)
+    return asarray(coords if coords is not None else ob)
+
+
 def PolygonPath(polygon):
     """Constructs a compound matplotlib path from a Shapely or GeoJSON-like
     geometric object"""
@@ -36,13 +42,13 @@ def PolygonPath(polygon):
     def coding(ob):
         # The codes will be all "LINETO" commands, except for "MOVETO"s at the
         # beginning of each subpath
-        n = len(getattr(ob, 'coords', None) or ob)
+        n = len(_coords(ob))
         vals = ones(n, dtype=Path.code_type) * Path.LINETO
         vals[0] = Path.MOVETO
         return vals
     vertices = concatenate(
-                    [asarray(this.exterior)] 
-                    + [asarray(r) for r in this.interiors])
+                    [_coords(this.exterior)]
+                    + [_coords(r) for r in this.interiors])
     codes = concatenate(
                 [coding(this.exterior)] 
                 + [coding(r) for r in this.interiors])

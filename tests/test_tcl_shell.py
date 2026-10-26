@@ -1,7 +1,7 @@
 import sys
 import unittest
-from PyQt4 import QtGui
-from PyQt4.QtCore import QThread
+from PyQt6 import QtCore, QtGui, QtWidgets
+from PyQt6.QtCore import QThread
 
 from FlatCAMApp import App
 from os import listdir
@@ -42,7 +42,7 @@ class TclShellTest(unittest.TestCase):
     def setUpClass(cls):
 
         cls.setup = True
-        cls.app = QtGui.QApplication(sys.argv)
+        cls.app = QtWidgets.QApplication.instance() or QtWidgets.QApplication(sys.argv)
 
         # Create App, keep app defaults (do not load
         # user-defined defaults).

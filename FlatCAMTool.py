@@ -6,10 +6,10 @@
 # MIT Licence                                              #
 ############################################################
 
-from PyQt4 import QtGui
+from PyQt6 import QtCore, QtGui, QtWidgets
 
 
-class FlatCAMTool(QtGui.QWidget):
+class FlatCAMTool(QtWidgets.QWidget):
 
     toolName = "FlatCAM Generic Tool"
 
@@ -21,11 +21,11 @@ class FlatCAMTool(QtGui.QWidget):
         :param parent: Qt Parent
         :return: FlatCAMTool
         """
-        QtGui.QWidget.__init__(self, parent)
+        QtWidgets.QWidget.__init__(self, parent)
 
-        # self.setSizePolicy(QtGui.QSizePolicy.Maximum, QtGui.QSizePolicy.Maximum)
+        # self.setSizePolicy(QtWidgets.QSizePolicy.Policy.Maximum, QtWidgets.QSizePolicy.Policy.Maximum)
 
-        self.layout = QtGui.QVBoxLayout()
+        self.layout = QtWidgets.QVBoxLayout()
         self.setLayout(self.layout)
 
         self.app = app
@@ -74,7 +74,11 @@ class FlatCAMTool(QtGui.QWidget):
         # Put ourself in the GUI
         self.app.ui.tool_scroll_area.setWidget(self)
 
-        # Switch notebook to tool page
-        self.app.ui.notebook.setCurrentWidget(self.app.ui.tool_tab)
+        # Switch notebook to the utility page, named after this tool
+        notebook = self.app.ui.notebook
+        index = notebook.indexOf(self.app.ui.utility_tab)
+        notebook.setTabText(index, self.toolName)
+        notebook.setTabVisible(index, True)
+        notebook.setCurrentIndex(index)
 
         self.show()
