@@ -339,6 +339,7 @@ def set_job_end(job_obj, end):
     """
     job_obj.z_end = end["z_end"]
     job_obj.return_to_origin = end["return_to_origin"]
+    job_obj.segment_length = end["segment_length"]
 
 
 class FlatCAMGerber(FlatCAMObj, Gerber):

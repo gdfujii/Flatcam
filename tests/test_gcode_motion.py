@@ -2,12 +2,14 @@
 Plunge feed rates and how jobs end, in the generated G-code.
 """
 
+import math
 import re
 import sys
 import time
 import unittest
 
 from PyQt6 import QtWidgets
+from shapely.geometry import LineString, Point
 
 from FlatCAMApp import App
 
@@ -60,7 +62,7 @@ class GCodeMotionTestCase(unittest.TestCase):
     def test_job_ends_lifted_before_returning(self):
         self.fc.defaults["cutting_job_end"].update(z_end=15.0, return_to_origin=True)
         gcode = self.isolation_gcode()
-        self.assertEqual(gcode[-3:], ["G00 Z%.4f" % (15.0 / INCH), "M05", "G00 X0.0000Y0.0000"])
+        self.assertEqual(gcode[-3:], ["G00 Z%.4f" % (15.0 / INCH), "M05", "G00 X0.0000 Y0.0000"])
 
     def test_job_can_end_without_returning(self):
         self.fc.defaults["cutting_job_end"].update(z_end=10.0, return_to_origin=False)
@@ -72,6 +74,54 @@ class GCodeMotionTestCase(unittest.TestCase):
         gcode = self.isolation_gcode()
         travel = self.fc.collection.get_by_name('simple1.gbr_iso').options["travelz"]
         self.assertEqual(gcode[-3], "G00 Z%.4f" % travel)
+
+    def cuts(self, gcode):
+        """(start, end) of every XY move made at cutting depth."""
+        moves = []
+        x = y = z = 0.0
+        for line in gcode:
+            words = dict((k, float(v)) for k, v in re.findall(r'([GXYZ])(-?[\d.]+)', line))
+            nx, ny, z = words.get('X', x), words.get('Y', y), words.get('Z', z)
+            if words.get('G') == 1 and z < 0 and ('X' in words or 'Y' in words):
+                moves.append(((x, y), (nx, ny)))
+            x, y = nx, ny
+        return moves
+
+    def test_long_cuts_are_split_for_height_maps(self):
+        self.fc.defaults["cutting_job_end"]["segment_length"] = 2.0
+        gcode = self.isolation_gcode()
+        moves = self.cuts(gcode)
+        self.assertTrue(moves)
+        lengths = [math.hypot(b[0] - a[0], b[1] - a[1]) for a, b in moves]
+        # Rounded to 4 decimals of an inch in the G-code
+        self.assertLessEqual(max(lengths), 2.0 / INCH + 2e-4)
+        # The board's long edges did need splitting
+        self.assertGreater(len(moves), len(self.cuts(self.unsplit_gcode())))
+
+    def unsplit_gcode(self):
+        self.fc.collection.delete_all()
+        self.fc.defaults["cutting_job_end"]["segment_length"] = 1000.0
+        self.fc.open_gerber('tests/gerber_files/simple1.gbr')
+        self.gerber = self.fc.collection.get_by_name('simple1.gbr')
+        return self.isolation_gcode()
+
+    def test_split_cuts_follow_the_same_path(self):
+        self.fc.defaults["cutting_job_end"]["segment_length"] = 2.0
+        split = self.isolation_gcode()
+        path = LineString([b for a, b in self.cuts(split)])
+        for a, b in self.cuts(self.unsplit_gcode()):
+            self.assertLess(path.distance(Point(b)), 2e-4)
+
+    def test_coordinates_are_separated(self):
+        gcode = self.isolation_gcode()
+        xy = [l for l in gcode if 'X' in l]
+        self.assertTrue(xy)
+        for line in xy:
+            self.assertRegex(line, r'^G0[01] X-?[\d.]+ Y-?[\d.]+$')
+
+    def test_settings_saved_before_segment_length_get_default(self):
+        del self.fc.defaults["cutting_job_end"]["segment_length"]
+        self.assertAlmostEqual(self.library.end_settings("MM")["segment_length"], 2.0)
 
     def test_drill_bits_plunge_at_their_plunge_rate(self):
         for bit in self.library.drill_bits():

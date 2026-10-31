@@ -356,7 +356,7 @@ class App(QtCore.QObject):
             "zdownrate": None,
             "excellon_zeros": "L",
             "gerber_use_buffer_for_union": True,
-            "cncjob_coordinate_format": "X%.4fY%.4f"
+            "cncjob_coordinate_format": "X%.4f Y%.4f"
         })
         # Cutting tool library ("Tool" tab)
         self.defaults.update(ToolLibrary.defaults())

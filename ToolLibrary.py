@@ -51,8 +51,10 @@ DEFAULT_OPERATIONS = {
 }
 
 # How every job ends: lift to z_end (mm above the work), then go to X0 Y0
-# if return_to_origin.
-DEFAULT_JOB_END = {"z_end": 15.0, "return_to_origin": True}
+# if return_to_origin. Also, cutting moves are split into pieces no longer
+# than segment_length (mm), so a controller's height map (auto-leveling)
+# corrects Z all along them, not just at their ends.
+DEFAULT_JOB_END = {"z_end": 15.0, "return_to_origin": True, "segment_length": 2.0}
 
 # A hole and its drill bit may differ by this much (mm) without a warning.
 DRILL_TOLERANCE = 0.1
@@ -224,12 +226,30 @@ class ToolLibrary(QtWidgets.QWidget):
         end_grid.addWidget(self.end_height, 0, 1)
         end_grid.addWidget(self.return_cb, 1, 0, 1, 2)
         end_grid.setColumnStretch(2, 1)
+
+        ## Auto-leveling
+        layout.addWidget(QtWidgets.QLabel("<b>Auto-leveling</b>"))
+        level_grid = QtWidgets.QGridLayout()
+        layout.addLayout(level_grid)
+        segment_label = QtWidgets.QLabel("Split cuts longer than (mm):")
+        segment_label.setToolTip(
+            "Cutting moves are broken into pieces no longer than this.\n"
+            "A controller applying a height map only corrects Z at the\n"
+            "points in the G-code, so long straight cuts drift off the\n"
+            "surface between their ends. Use no more than the height\n"
+            "map's probe spacing.")
+        self.segment_length_entry = DistanceEntry()
+        self.segment_length_entry.setMaximumWidth(80)
+        level_grid.addWidget(segment_label, 0, 0)
+        level_grid.addWidget(self.segment_length_entry, 0, 1)
+        level_grid.setColumnStretch(2, 1)
         layout.addStretch()
 
         self.isolation_combo.activated.connect(self.on_operations_changed)
         self.outline_combo.activated.connect(self.on_operations_changed)
         self.drilling_cb.toggled.connect(self.on_operations_changed)
-        for entry in (self.isolation_cutz, self.outline_cutz, self.drilling_cutz, self.end_height):
+        for entry in (self.isolation_cutz, self.outline_cutz, self.drilling_cutz, self.end_height,
+                      self.segment_length_entry):
             # Only when done typing, so a half-typed number is never used
             entry.editingFinished.connect(self.on_operations_changed)
         self.return_cb.toggled.connect(self.on_operations_changed)
@@ -261,11 +281,16 @@ class ToolLibrary(QtWidgets.QWidget):
     def end_settings(self, units):
         """
         How every job ends, in ``units``. Keys: z_end (height to lift to),
-        return_to_origin.
+        return_to_origin, segment_length (longest cutting move).
         """
         end = self.job_end()
         return {"z_end": from_mm(end["z_end"], units),
-                "return_to_origin": end["return_to_origin"]}
+                "return_to_origin": end["return_to_origin"],
+                "segment_length": from_mm(self.segment_length(), units)}
+
+    def segment_length(self):
+        """Longest cutting move (mm). Settings saved before there was one get the default."""
+        return self.job_end().setdefault("segment_length", DEFAULT_JOB_END["segment_length"])
 
     def get_tool(self, tool_id):
         for tool in self.tools():
@@ -397,6 +422,7 @@ class ToolLibrary(QtWidgets.QWidget):
         self.drilling_cutz.setValue(ops["drilling"]["cutz"])
         self.end_height.setValue(self.job_end()["z_end"])
         self.return_cb.setChecked(self.job_end()["return_to_origin"])
+        self.segment_length_entry.setValue(self.segment_length())
 
         # Keep assignments to tools that were removed or changed type from lingering
         ops["isolation"]["tool"] = self.isolation_combo.currentData()
@@ -483,6 +509,11 @@ class ToolLibrary(QtWidgets.QWidget):
             self.app.inform.emit("[warning] Invalid end height: %r. Enter a number greater than zero."
                                  % self.end_height.text())
         self.job_end()["return_to_origin"] = self.return_cb.isChecked()
+        try:
+            self.job_end()["segment_length"] = self.segment_length_entry.value()
+        except ValueError:
+            self.app.inform.emit("[warning] Invalid cut length: %r. Enter a number greater than zero."
+                                 % self.segment_length_entry.text())
         # Shows the stored values again, which also undoes an invalid entry
         QtCore.QTimer.singleShot(0, self.refresh)
         self.changed.emit()

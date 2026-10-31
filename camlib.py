@@ -14,6 +14,7 @@ from numpy import arctan2, inf, array, sqrt, pi, ceil, sin, cos, dot, float32, \
     transpose
 from numpy.linalg import solve, norm
 from matplotlib.figure import Figure
+import math
 import re
 import sys
 import traceback
@@ -3053,7 +3054,7 @@ class CNCjob(Geometry):
 
     defaults = {
         "zdownrate": None,
-        "coordinate_format": "X%.4fY%.4f"
+        "coordinate_format": "X%.4f Y%.4f"
     }
 
     def __init__(self,
@@ -3096,6 +3097,10 @@ class CNCjob(Geometry):
         # and whether to then return to X0 Y0.
         self.z_end = None
         self.return_to_origin = True
+
+        # Longest cutting move (None: as long as the path). Shorter moves let
+        # a controller's height map correct Z all along the cut.
+        self.segment_length = None
 
         # Attributes to be included in serialization
         # Always append to it because it carries contents
@@ -3657,14 +3662,27 @@ class CNCjob(Geometry):
                 gcode += "G01 Z%.4f\n" % zcut       # Start cutting
 
         # Cutting...
-        for pt in path[1:]:
-            gcode += t % (1, pt[0], pt[1])    # Linear motion to point
+        for start, end in zip(path, path[1:]):
+            for pt in self.split_move(start, end):
+                gcode += t % (1, pt[0], pt[1])    # Linear motion to point
 
         # Up to travelling height.
         if up:
             gcode += "G00 Z%.4f\n" % ztravel  # Stop cutting
 
         return gcode
+
+    def split_move(self, start, end):
+        """
+        Points to cut through from ``start`` to ``end`` (excluded and included),
+        evenly spaced no further apart than self.segment_length.
+        """
+        length = math.hypot(end[0] - start[0], end[1] - start[1])
+        if not self.segment_length or length <= self.segment_length:
+            return [end]
+        n = int(math.ceil(length / self.segment_length))
+        return [(start[0] + (end[0] - start[0]) * i / n,
+                 start[1] + (end[1] - start[1]) * i / n) for i in range(1, n + 1)]
 
     def point2gcode(self, point):
         gcode = ""
