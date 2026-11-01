@@ -51,10 +51,12 @@ DEFAULT_OPERATIONS = {
 }
 
 # How every job ends: lift to z_end (mm above the work), then go to X0 Y0
-# if return_to_origin. Also, cutting moves are split into pieces no longer
-# than segment_length (mm), so a controller's height map (auto-leveling)
-# corrects Z all along them, not just at their ends.
-DEFAULT_JOB_END = {"z_end": 15.0, "return_to_origin": True, "segment_length": 2.0}
+# if return_to_origin. Also, how new Geometry objects start out: with their
+# cutting moves split (if split) into pieces no longer than segment_length
+# (mm), so a controller's height map (auto-leveling) corrects Z all along
+# them, not just at their ends. Each object can change this.
+DEFAULT_JOB_END = {"z_end": 15.0, "return_to_origin": True,
+                   "split": True, "segment_length": 2.0}
 
 # A hole and its drill bit may differ by this much (mm) without a warning.
 DRILL_TOLERANCE = 0.1
@@ -231,18 +233,23 @@ class ToolLibrary(QtWidgets.QWidget):
         layout.addWidget(QtWidgets.QLabel("<b>Auto-leveling</b>"))
         level_grid = QtWidgets.QGridLayout()
         layout.addLayout(level_grid)
-        segment_label = QtWidgets.QLabel("Split cuts longer than (mm):")
-        segment_label.setToolTip(
+        self.split_cb = QtWidgets.QCheckBox("Split cuts longer than (mm):")
+        self.split_cb.setToolTip(
             "Cutting moves are broken into pieces no longer than this.\n"
             "A controller applying a height map only corrects Z at the\n"
             "points in the G-code, so long straight cuts drift off the\n"
             "surface between their ends. Use no more than the height\n"
-            "map's probe spacing.")
+            "map's probe spacing. Shorter pieces run slower.")
         self.segment_length_entry = DistanceEntry()
         self.segment_length_entry.setMaximumWidth(80)
-        level_grid.addWidget(segment_label, 0, 0)
+        level_grid.addWidget(self.split_cb, 0, 0)
         level_grid.addWidget(self.segment_length_entry, 0, 1)
         level_grid.setColumnStretch(2, 1)
+        level_note = QtWidgets.QLabel(
+            "For new isolation, outline and other geometry. Change it for one "
+            "object on its Selected tab.")
+        level_note.setWordWrap(True)
+        layout.addWidget(level_note)
         layout.addStretch()
 
         self.isolation_combo.activated.connect(self.on_operations_changed)
@@ -253,6 +260,7 @@ class ToolLibrary(QtWidgets.QWidget):
             # Only when done typing, so a half-typed number is never used
             entry.editingFinished.connect(self.on_operations_changed)
         self.return_cb.toggled.connect(self.on_operations_changed)
+        self.split_cb.toggled.connect(self.on_operations_changed)
 
         for tool in self.tools():
             tool.setdefault("plunge", plunge_rate(tool))
@@ -285,8 +293,18 @@ class ToolLibrary(QtWidgets.QWidget):
         """
         end = self.job_end()
         return {"z_end": from_mm(end["z_end"], units),
-                "return_to_origin": end["return_to_origin"],
-                "segment_length": from_mm(self.segment_length(), units)}
+                "return_to_origin": end["return_to_origin"]}
+
+    def split_settings(self, units):
+        """
+        How new Geometry objects split their cutting moves, in ``units``.
+        Keys: split (bool), segment_length (longest move).
+        """
+        return {"split": self.split(), "segment_length": from_mm(self.segment_length(), units)}
+
+    def split(self):
+        """Whether to split. Settings saved before there was a choice get the default."""
+        return self.job_end().setdefault("split", DEFAULT_JOB_END["split"])
 
     def segment_length(self):
         """Longest cutting move (mm). Settings saved before there was one get the default."""
@@ -422,7 +440,9 @@ class ToolLibrary(QtWidgets.QWidget):
         self.drilling_cutz.setValue(ops["drilling"]["cutz"])
         self.end_height.setValue(self.job_end()["z_end"])
         self.return_cb.setChecked(self.job_end()["return_to_origin"])
+        self.split_cb.setChecked(self.split())
         self.segment_length_entry.setValue(self.segment_length())
+        self.segment_length_entry.setEnabled(self.split())
 
         # Keep assignments to tools that were removed or changed type from lingering
         ops["isolation"]["tool"] = self.isolation_combo.currentData()
@@ -509,6 +529,7 @@ class ToolLibrary(QtWidgets.QWidget):
             self.app.inform.emit("[warning] Invalid end height: %r. Enter a number greater than zero."
                                  % self.end_height.text())
         self.job_end()["return_to_origin"] = self.return_cb.isChecked()
+        self.job_end()["split"] = self.split_cb.isChecked()
         try:
             self.job_end()["segment_length"] = self.segment_length_entry.value()
         except ValueError:

@@ -3678,7 +3678,7 @@ class CNCjob(Geometry):
         evenly spaced no further apart than self.segment_length.
         """
         length = math.hypot(end[0] - start[0], end[1] - start[1])
-        if not self.segment_length or length <= self.segment_length:
+        if not self.segment_length or self.segment_length <= 0 or length <= self.segment_length:
             return [end]
         n = int(math.ceil(length / self.segment_length))
         return [(start[0] + (end[0] - start[0]) * i / n,

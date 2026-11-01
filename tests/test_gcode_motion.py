@@ -43,9 +43,11 @@ class GCodeMotionTestCase(unittest.TestCase):
             time.sleep(0.05)
         self.fail("%s was not created" % name)
 
-    def isolation_gcode(self):
+    def isolation_gcode(self, **options):
+        """G-code of the isolation, with ``options`` changed on its geometry."""
         self.gerber.isolate(passes=1, combine=True)
         geo = self.wait_for('simple1.gbr_iso')
+        geo.options.update(options)
         geo.generatecncjob()
         return lines(self.wait_for('simple1.gbr_iso_cnc').gcode)
 
@@ -87,30 +89,72 @@ class GCodeMotionTestCase(unittest.TestCase):
             x, y = nx, ny
         return moves
 
-    def test_long_cuts_are_split_for_height_maps(self):
-        self.fc.defaults["cutting_job_end"]["segment_length"] = 2.0
-        gcode = self.isolation_gcode()
-        moves = self.cuts(gcode)
-        self.assertTrue(moves)
-        lengths = [math.hypot(b[0] - a[0], b[1] - a[1]) for a, b in moves]
-        # Rounded to 4 decimals of an inch in the G-code
-        self.assertLessEqual(max(lengths), 2.0 / INCH + 2e-4)
-        # The board's long edges did need splitting
-        self.assertGreater(len(moves), len(self.cuts(self.unsplit_gcode())))
+    def longest(self, gcode):
+        return max(math.hypot(b[0] - a[0], b[1] - a[1]) for a, b in self.cuts(gcode))
 
-    def unsplit_gcode(self):
+    def regenerate(self, **options):
+        """Starts over and returns the isolation G-code with ``options``."""
         self.fc.collection.delete_all()
-        self.fc.defaults["cutting_job_end"]["segment_length"] = 1000.0
         self.fc.open_gerber('tests/gerber_files/simple1.gbr')
         self.gerber = self.fc.collection.get_by_name('simple1.gbr')
-        return self.isolation_gcode()
+        return self.isolation_gcode(**options)
+
+    def test_new_geometry_splits_as_set_in_tool_tab(self):
+        self.fc.defaults["cutting_job_end"].update(split=True, segment_length=3.0)
+        self.gerber.isolate(passes=1, combine=True)
+        geo = self.wait_for('simple1.gbr_iso')
+        self.assertTrue(geo.options["segmented"])
+        self.assertAlmostEqual(geo.options["segmentlength"], 3.0 / INCH)
+
+        self.fc.defaults["cutting_job_end"]["split"] = False
+        self.gerber.isolate(passes=1, combine=True, outname='unsplit_iso')
+        self.assertFalse(self.wait_for('unsplit_iso').options["segmented"])
+
+    def test_long_cuts_are_split_for_height_maps(self):
+        split = self.isolation_gcode(segmented=True, segmentlength=2.0 / INCH)
+        # Rounded to 4 decimals of an inch in the G-code
+        self.assertLessEqual(self.longest(split), 2.0 / INCH + 2e-4)
+        # The board's long edges did need splitting
+        unsplit = self.regenerate(segmented=False)
+        self.assertGreater(self.longest(unsplit), 2.0 / INCH + 2e-4)
+        self.assertGreater(len(self.cuts(split)), len(self.cuts(unsplit)))
+
+    def test_split_length_is_per_object(self):
+        gcode = self.isolation_gcode(segmented=True, segmentlength=0.5 / INCH)
+        self.assertLessEqual(self.longest(gcode), 0.5 / INCH + 2e-4)
+
+    def test_invalid_split_length_leaves_cuts_whole(self):
+        messages = []
+        self.fc.inform.connect(messages.append)
+        gcode = self.isolation_gcode(segmented=True, segmentlength=0.0)
+        unsplit = self.regenerate(segmented=False)
+        self.assertEqual(self.cuts(gcode), self.cuts(unsplit))
+        self.assertTrue(any("Max cut length" in m for m in messages))
 
     def test_split_cuts_follow_the_same_path(self):
-        self.fc.defaults["cutting_job_end"]["segment_length"] = 2.0
-        split = self.isolation_gcode()
+        split = self.isolation_gcode(segmented=True, segmentlength=2.0 / INCH)
         path = LineString([b for a, b in self.cuts(split)])
-        for a, b in self.cuts(self.unsplit_gcode()):
+        for a, b in self.cuts(self.regenerate(segmented=False)):
             self.assertLess(path.distance(Point(b)), 2e-4)
+
+    def test_selected_tab_controls_split(self):
+        self.gerber.isolate(passes=1, combine=True)
+        geo = self.wait_for('simple1.gbr_iso')
+        self.fc.collection.set_all_inactive()
+        self.fc.collection.set_active('simple1.gbr_iso')
+        self.app.processEvents()
+        ui = geo.ui
+        self.assertTrue(ui.segmented_cb.isChecked())  # The Tool tab's default
+        ui.segmentlength_entry.set_value(1.0 / INCH)
+        ui.segmented_cb.set_value(True)
+        geo.on_generatecnc_button_click()
+        gcode = lines(self.wait_for('simple1.gbr_iso_cnc').gcode)
+        self.assertLessEqual(self.longest(gcode), 1.0 / INCH + 2e-4)
+
+        ui.segmented_cb.set_value(False)
+        self.assertFalse(ui.segmentlength_entry.isEnabled())
+        geo.on_generatecnc_button_click()
+        self.assertFalse(geo.options["segmented"])
 
     def test_coordinates_are_separated(self):
         gcode = self.isolation_gcode()
@@ -119,9 +163,10 @@ class GCodeMotionTestCase(unittest.TestCase):
         for line in xy:
             self.assertRegex(line, r'^G0[01] X-?[\d.]+ Y-?[\d.]+$')
 
-    def test_settings_saved_before_segment_length_get_default(self):
+    def test_settings_saved_before_splitting_get_default(self):
         del self.fc.defaults["cutting_job_end"]["segment_length"]
-        self.assertAlmostEqual(self.library.end_settings("MM")["segment_length"], 2.0)
+        del self.fc.defaults["cutting_job_end"]["split"]
+        self.assertEqual(self.library.split_settings("MM"), {"split": True, "segment_length": 2.0})
 
     def test_drill_bits_plunge_at_their_plunge_rate(self):
         for bit in self.library.drill_bits():

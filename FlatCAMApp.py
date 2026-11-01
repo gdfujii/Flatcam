@@ -1080,6 +1080,12 @@ class App(QtCore.QObject):
                 oname = option[len(kind) + 1:]
                 obj.options[oname] = self.options[option]
 
+        # New geometry splits its cuts as set in the Tool tab
+        if kind == "geometry":
+            split = self.tool_library.split_settings(obj.units)
+            obj.options["segmented"] = split["split"]
+            obj.options["segmentlength"] = split["segment_length"]
+
         # make sure that the plot option of the new object is reflecting the current status and not the general option
         # solve issues with the modelview currently used (checkbox on the Project Tab)
         obj.options['plot'] = self.plot

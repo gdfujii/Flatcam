@@ -398,6 +398,32 @@ class GeometryObjectUI(ObjectUI):
 
         self.ois_mpass = OptionalInputSection(self.mpass_cb, [self.maxdepth_entry])
 
+        # Split long cuts
+        segmentedlabel = QtWidgets.QLabel('Split long cuts:')
+        segmentedlabel.setToolTip(
+            "Break cutting moves into pieces no\n"
+            "longer than Max cut length, so a\n"
+            "controller applying a height map\n"
+            "(auto-leveling) corrects Z all along\n"
+            "them, not just at their ends.\n"
+            "Shorter pieces run slower."
+        )
+        grid1.addWidget(segmentedlabel, 8, 0)
+        self.segmented_cb = FCCheckBox()
+        grid1.addWidget(self.segmented_cb, 8, 1)
+
+        segmentlengthlabel = QtWidgets.QLabel('Max cut length:')
+        segmentlengthlabel.setToolTip(
+            "Longest cutting move (positive).\n"
+            "No more than the height map's\n"
+            "probe spacing."
+        )
+        grid1.addWidget(segmentlengthlabel, 9, 0)
+        self.segmentlength_entry = LengthEntry()
+        grid1.addWidget(self.segmentlength_entry, 9, 1)
+
+        self.ois_segmented = OptionalInputSection(self.segmented_cb, [self.segmentlength_entry])
+
         # Button
         self.generate_cnc_button = QtWidgets.QPushButton('Generate')
         self.generate_cnc_button.setToolTip(

@@ -339,7 +339,6 @@ def set_job_end(job_obj, end):
     """
     job_obj.z_end = end["z_end"]
     job_obj.return_to_origin = end["return_to_origin"]
-    job_obj.segment_length = end["segment_length"]
 
 
 class FlatCAMGerber(FlatCAMObj, Gerber):
@@ -1433,6 +1432,10 @@ class FlatCAMGeometry(FlatCAMObj, Geometry):
             "paintcontour": True,
             "multidepth": False,
             "depthperpass": 0.002,
+            # Split cutting moves into pieces no longer than segmentlength,
+            # for controllers applying a height map
+            "segmented": False,
+            "segmentlength": 2.0 / 25.4,
             "selectmethod": "single"
         })
 
@@ -1468,6 +1471,8 @@ class FlatCAMGeometry(FlatCAMObj, Geometry):
             "paintcontour": self.ui.paintcontour_cb,
             "multidepth": self.ui.mpass_cb,
             "depthperpass": self.ui.maxdepth_entry,
+            "segmented": self.ui.segmented_cb,
+            "segmentlength": self.ui.segmentlength_entry,
             "selectmethod": self.ui.selectmethod_combo
         })
 
@@ -1682,6 +1687,7 @@ class FlatCAMGeometry(FlatCAMObj, Geometry):
                        spindlespeed=None,
                        multidepth=None,
                        depthperpass=None,
+                       segmentlength=None,
                        use_thread=True):
         """
         Creates a CNCJob out of this Geometry object. The actual
@@ -1695,10 +1701,18 @@ class FlatCAMGeometry(FlatCAMObj, Geometry):
         :param tooldia: Tool diameter
         :param outname: Name of the new object
         :param spindlespeed: Spindle speed (RPM)
+        :param segmentlength: Longest cutting move (default: the object's
+            setting; None there when it is not split)
         :return: None
         """
 
         outname = outname if outname is not None else self.options["name"] + "_cnc"
+        if segmentlength is None and self.options["segmented"]:
+            segmentlength = self.options["segmentlength"]
+        if segmentlength is not None and not segmentlength > 0:
+            self.app.inform.emit("[warning] Max cut length must be greater than zero. "
+                                 "Cuts were not split.")
+            segmentlength = None
         z_cut = z_cut if z_cut is not None else self.options["cutz"]
         z_move = z_move if z_move is not None else self.options["travelz"]
         feedrate = feedrate if feedrate is not None else self.options["feedrate"]
@@ -1736,6 +1750,7 @@ class FlatCAMGeometry(FlatCAMObj, Geometry):
                 job_obj.zdownrate = feedrate_z
             job_obj.spindlespeed = spindlespeed
             set_job_end(job_obj, self.app.tool_library.end_settings(self.units))
+            job_obj.segment_length = segmentlength
             app_obj.progress.emit(40)
             # TODO: The tolerance should not be hard coded. Just for testing.
             job_obj.generate_from_geometry_2(self,
@@ -1819,6 +1834,7 @@ class FlatCAMGeometry(FlatCAMObj, Geometry):
         if self.options['feedrate_z'] is not None:
             self.options['feedrate_z'] *= factor
         self.options['cnctooldia'] *= factor
+        self.options['segmentlength'] *= factor
         self.options['painttooldia'] *= factor
         self.options['paintmargin'] *= factor
 

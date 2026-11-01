@@ -60,7 +60,8 @@ automatically for inch projects.
 
 **Auto-leveling** section:
 
-- **Split cuts longer than** (default 2 mm). See "Height-map friendly
+- **Split cuts longer than** (default on, 2 mm): how new isolation,
+  outline and other geometry objects start out. See "Height-map friendly
   cuts" below.
 
 Depths and heights are typed in and take effect when you press Enter or
@@ -83,12 +84,14 @@ cutout and CNC jobs.
 - **Drilling with tool changes.** Each drill bit is a tool (`T1`, `T2`, …
   smallest first) with `M6` and an `M0` pause. Tool change is turned on
   automatically when a job needs more than one bit.
-- **Height-map friendly cuts.** Cutting moves are split into pieces no
-  longer than the Tool tab's "Split cuts longer than" (default 2 mm). A
-  controller applying an auto-level height map only corrects Z at the points
-  in the G-code. On one long line, such as a 97 mm board edge, the tool
-  drifts off the surface between the ends and then jumps when the next line
-  starts. Keep the setting below the map's probe spacing.
+- **Height-map friendly cuts.** A geometry object's Selected tab has
+  **Split long cuts** and **Max cut length**. When ticked, Generate breaks
+  cutting moves into pieces no longer than that. A controller applying an
+  auto-level height map only corrects Z at the points in the G-code. On one
+  long line, such as a 97 mm board edge, the tool drifts off the surface
+  between the ends and then jumps when the next line starts. Keep the length
+  below the map's probe spacing; shorter pieces run slower. New objects take
+  the Tool tab's setting.
 - **Spaced coordinates.** Moves are written `G01 X1.0000 Y2.0000` rather
   than `G01 X1.0000Y2.0000`, as most controllers and senders expect.
 
@@ -172,8 +175,9 @@ delete drill files from older exports.
      for example `1.8`
    - Drilling: tick "Drill bits above", depth `1.8`
 4. Under **End of every job**: lift height `15`, return to X0 Y0 as
-   preferred. Under **Auto-leveling**, leave "Split cuts longer than" at
-   `2` (or less than your height map's probe spacing).
+   preferred. Under **Auto-leveling**, tick "Split cuts longer than" and set
+   it below your height map's probe spacing (default `2`). Each isolation or
+   outline object can change it on its Selected tab before Generate.
 5. In **Options → Geometry**, set **Travel Z** to `2`. Do the same under
    **Options → Excellon**.
 
