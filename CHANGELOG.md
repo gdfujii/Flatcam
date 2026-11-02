@@ -92,6 +92,15 @@ cutout and CNC jobs.
   between the ends and then jumps when the next line starts. Keep the length
   below the map's probe spacing; shorter pieces run slower. New objects take
   the Tool tab's setting.
+- **Commented .nc files.** The CNC job's Export G-Code dialog offers
+  "NC file with comments (*.nc)" (the default), "G-Code" and "All files".
+  An .nc file starts with comments describing the job: name, source object,
+  units, date, tool and cut width, feed and plunge rates, Z cut/travel/end,
+  end position, max cut length, the X and Y range of the cuts and the
+  spindle speed. Drilling jobs list each drill bit with its size, hole
+  count, plunge rate and speed. The G-code itself is unchanged. Unlike older
+  FlatCAM output there is no "MACH3 preprocessor" comment, which never
+  matched what was written.
 - **Spaced coordinates.** Moves are written `G01 X1.0000 Y2.0000` rather
   than `G01 X1.0000Y2.0000`, as most controllers and senders expect.
 

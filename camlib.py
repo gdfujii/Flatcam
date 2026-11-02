@@ -994,7 +994,9 @@ class Geometry(object):
         :return: None
         """
         for attr in self.ser_attrs:
-            setattr(self, attr, d[attr])
+            # Projects saved by older versions may lack newer attributes
+            if attr in d:
+                setattr(self, attr, d[attr])
 
     def union(self):
         """
