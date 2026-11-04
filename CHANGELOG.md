@@ -81,9 +81,23 @@ cutout and CNC jobs.
   above the board.
 - **Rapid drill retract.** Each hole is `G01 Z<depth>` → `G00 Z<travel>`.
   The slow `G01 Z0` climb out of every hole is gone.
-- **Drilling with tool changes.** Each drill bit is a tool (`T1`, `T2`, …
-  smallest first) with `M6` and an `M0` pause. Tool change is turned on
-  automatically when a job needs more than one bit.
+- **Tool changes, as in earlier FlatCAM output.** Every job starts each tool
+  with `M5` → lift to the tool-change height → `G00 X0 Y0` → `T<n>` → `M6`
+  → `(MSG, Change to <tool>, Tool Dia = <dia>)` → `M0` pause → lift again
+  (Z may have been re-zeroed) → spindle on → down to travel height.
+  - Routing (isolation, outline): one change, to `T1`, at the job's end
+    height. The diameter is the cut width.
+  - Drilling with the Tool tab's bits: one change per bit (`T1`, `T2`, …
+    smallest first), the first bit included, at the Excellon object's tool
+    change Z.
+  - The spindle only starts once the first tool is fitted.
+- **Spaced G-code.** Exported files always separate G-code words
+  (`G01 X1.0000 Y2.0000`), including jobs generated or saved in a project
+  with the old run-together format.
+- **Saved jobs keep their settings.** A CNC job saved in a project keeps its
+  plunge rate, spindle speed, end height, return to origin and max cut
+  length, so the comments of an .nc file exported after reopening the
+  project match its G-code.
 - **Height-map friendly cuts.** A geometry object's Selected tab has
   **Split long cuts** and **Max cut length**. When ticked, Generate breaks
   cutting moves into pieces no longer than that. A controller applying an

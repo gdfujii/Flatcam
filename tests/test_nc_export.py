@@ -235,6 +235,66 @@ class NCExportTestCase(unittest.TestCase):
         self.assertEqual(CNCjob.defaults["coordinate_format"], "X%.4f Y%.4f")
         self.assertEqual(self.fc.defaults["units"], "MM")
 
+    def test_routing_starts_with_tool_change(self):
+        job = self.isolation_job()
+        gcode = [l.rstrip() for l in job.gcode.splitlines()]
+        dia = job.job_info["tooldia"]
+        travel = self.fc.collection.get_by_name('simple1.gbr_iso').options["travelz"]
+        change = "G00 Z%.4f" % (15.0 / INCH)
+        self.assertEqual(gcode[:19], [
+            "G20", "G90", "G94", "", "G01 F%.2f" % (200.0 / INCH), "",
+            "M5", change, "G00 X0.0000 Y0.0000", "T1", "M6",
+            "(MSG, Change to End mill [0.8mm], Tool Dia = %.4f)" % dia, "M0", change, "",
+            "M03 S10000", "G00 Z%.4f" % travel, "G01 F%.2f" % (200.0 / INCH),
+            gcode[18]])
+        self.assertTrue(gcode[18].startswith("G00 X"))  # Then off to the first cut
+        self.assertEqual(sum(l == "M6" for l in gcode), 1)
+
+    def test_drilling_changes_tool_for_every_bit(self):
+        self.fc.open_excellon('tests/excellon_files/case1.drl')
+        exc = self.fc.collection.get_by_name('case1.drl')
+        exc.options["toolchange"] = False  # The Tool tab's bits are always changed
+        self.fc.collection.set_active('case1.drl')
+        exc.ui.tools_table.selectAll()
+        exc.on_create_cncjob_button_click()
+        job = self.wait_for('case1.drl_cnc')
+        gcode = [l.rstrip() for l in job.gcode.splitlines()]
+        bits = job.job_info["tools"]
+        changes = [i for i, l in enumerate(gcode) if l == "M6"]
+        self.assertEqual(len(changes), len(bits))
+        self.assertLess(changes[0], min(i for i, l in enumerate(gcode) if l.startswith("G01 Z-")))
+        change = "G00 Z%.4f" % exc.options["toolchangez"]
+        for i, bit in zip(changes, bits):
+            self.assertEqual(gcode[i - 4:i], ["M5", change, "G00 X0.0000 Y0.0000", "T%s" % bit["tool"]])
+            self.assertEqual(gcode[i + 1], "(MSG, Change to %s, Tool Dia = %.4f)" % (bit["name"], bit["dia"]))
+            self.assertEqual(gcode[i + 2:i + 5], ["M0", change, ""])
+            self.assertTrue(gcode[i + 5].startswith("M03"))
+        # The spindle only starts after the first bit is fitted
+        self.assertFalse(any(l.startswith("M03") for l in gcode[:changes[0]]))
+
+    def test_export_spaces_old_run_together_gcode(self):
+        job = self.isolation_job()
+        job.gcode = "G21\nG00 X0.0619Y0.5181\nG01X1.0000Y2.0000F100\n(MSG, X1Y2)\nM05\n"
+        path = os.path.join(self.tmpdir, "old.nc")
+        job.export_gcode(path, comments=True)
+        with open(path) as f:
+            text = f.read()
+        self.assertIn("G00 X0.0619 Y0.5181\n", text)
+        self.assertIn("G01 X1.0000 Y2.0000 F100\n", text)
+        self.assertIn("(MSG, X1Y2)\n", text)  # Comments as they were
+
+    def test_saved_job_keeps_settings_for_its_comments(self):
+        job = self.isolation_job()
+        before = self.export(job, "before.nc", comments=True).splitlines()
+        loaded = FlatCAMCNCjob("loaded")
+        loaded.from_dict(job.to_dict())
+        loaded.options["name"] = job.options["name"]
+        after = self.export(loaded, "after.nc", comments=True).splitlines()
+        settings = [l for l in before if l.startswith(("(Feedrate", "(Z", "(X,Y", "(Max", "(Spindle"))]
+        self.assertTrue(settings)
+        for line in settings:
+            self.assertIn(line, after)
+
     def test_job_from_older_project_still_exports(self):
         job = self.isolation_job()
         saved = job.to_dict()

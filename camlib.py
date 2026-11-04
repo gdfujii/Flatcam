@@ -90,6 +90,20 @@ def gcode_ascii(text):
     return "".join(c for c in text if " " <= c <= "~" or c in "\r\n\t")
 
 
+def gcode_spaced(text):
+    """
+    ``text`` with every G-code word separated by a space ("G01 X1.0 Y2.0"
+    rather than "G01X1.0Y2.0"), as most controllers and senders expect.
+    Comments are left as they are.
+    """
+    # Code and comments, alternately: a comment runs from "(" to ")" or from
+    # ";" to the end of the line
+    parts = re.split(r'(\([^)\n]*\)?|;[^\n]*)', text)
+    for i in range(0, len(parts), 2):
+        parts[i] = re.sub(r'(?<=[\d.])(?=[A-Za-z])', ' ', parts[i])
+    return "".join(parts)
+
+
 def gcode_comment_text(text):
     """
     ``text`` made safe inside a one-line G-code comment: plain ASCII, on one
@@ -3137,7 +3151,8 @@ class CNCjob(Geometry):
         # from Geometry.
         self.ser_attrs += ['kind', 'z_cut', 'z_move', 'feedrate', 'tooldia',
                            'gcode', 'input_geometry_bounds', 'gcode_parsed',
-                           'steps_per_circ']
+                           'steps_per_circ', 'zdownrate', 'spindlespeed', 'z_end',
+                           'return_to_origin', 'segment_length']
 
     def convert_units(self, units):
         factor = Geometry.convert_units(self, units)
@@ -3212,19 +3227,10 @@ class CNCjob(Geometry):
         up = "G00 Z%.4f\n" % self.z_move  # Rapid retract, straight out of the hole
 
         # Initialization
-        gcode = self.unitcode[self.units.upper()] + "\n"
-        gcode += self.absolutecode + "\n"
-        gcode += self.feedminutecode + "\n"
-        gcode += "F%.2f\n" % self.feedrate
-        gcode += "G00 Z%.4f\n" % self.z_move  # Move to travel height
-
-        if self.spindlespeed is not None:
-            # Spindle start with configured speed
-            gcode += "M03 S%d\n" % int(self.spindlespeed)
-        else:
-            gcode += "M03\n"  # Spindle start
-
-        # gcode += self.pausecode + "\n"
+        gcode = self.start_gcode()
+        if not toolchange:
+            gcode += "G00 Z%.4f\n" % self.z_move  # Move to travel height
+            gcode += self.spindle_gcode(self.spindlespeed)
 
         for tool in tools:
 
@@ -3235,21 +3241,8 @@ class CNCjob(Geometry):
 
                 # Tool change sequence (optional)
                 if toolchange:
-                    gcode += "G00 Z%.4f\n" % toolchangez
-                    gcode += "T%d\n" % int(tool)  # Indicate tool slot (for automatic tool changer)
-                    gcode += "M5\n"  # Spindle Stop
-                    gcode += "M6\n"  # Tool change
-                    if "name" in params:
-                        gcode += "(MSG, Change to %s, dia=%.4f)\n" % (gcode_comment_text(params["name"]),
-                                                                      exobj.tools[tool]["C"])
-                    else:
-                        gcode += "(MSG, Change to tool dia=%.4f)\n" % exobj.tools[tool]["C"]
-                    gcode += "M0\n"  # Temporary machine stop
-                    if spindlespeed is not None:
-                        # Spindle start with configured speed
-                        gcode += "M03 S%d\n" % int(spindlespeed)
-                    else:
-                        gcode += "M03\n"  # Spindle start
+                    gcode += self.toolchange_gcode(int(tool), exobj.tools[tool]["C"], toolchangez,
+                                                   spindlespeed, name=params.get("name"))
 
                 if params.get("feedrate") is not None:
                     gcode += "F%.2f\n" % params["feedrate"]
@@ -3263,6 +3256,39 @@ class CNCjob(Geometry):
         gcode += self.end_gcode()
 
         self.gcode = gcode
+
+    def start_gcode(self):
+        """G-code to set up a job: units, absolute coordinates, feed per minute, feed rate."""
+        return "%s\n%s\n%s\n\nG01 F%.2f\n\n" % (self.unitcode[self.units.upper()], self.absolutecode,
+                                               self.feedminutecode, self.feedrate)
+
+    @staticmethod
+    def spindle_gcode(spindlespeed):
+        """G-code to start the spindle, at ``spindlespeed`` RPM if given."""
+        if spindlespeed is not None:
+            return "M03 S%d\n" % int(spindlespeed)
+        return "M03\n"
+
+    def toolchange_gcode(self, number, dia, toolchangez, spindlespeed, name=None):
+        """
+        G-code to change to tool ``number``: stop the spindle, lift to
+        ``toolchangez``, go to X0 Y0, select the tool (T, M6), show a message
+        and pause (M0) for the operator to change the bit and re-zero Z, then
+        start the spindle and go down to the travel height.
+        """
+        what = "%s, Tool Dia = %.4f" % (gcode_comment_text(name), dia) if name \
+            else "Tool Dia = %.4f" % dia
+        gcode = "M5\n"  # Spindle stop
+        gcode += "G00 Z%.4f\n" % toolchangez
+        gcode += ("G00 " + CNCjob.defaults["coordinate_format"] + "\n") % (0, 0)
+        gcode += "T%d\n" % number  # Tool slot (for an automatic tool changer)
+        gcode += "M6\n"  # Tool change
+        gcode += "(MSG, Change to %s)\n" % what
+        gcode += "M0\n"  # Pause until the operator resumes
+        gcode += "G00 Z%.4f\n\n" % toolchangez  # Z may have been re-zeroed: lift again
+        gcode += self.spindle_gcode(spindlespeed)
+        gcode += "G00 Z%.4f\n" % self.z_move  # Down to travel height
+        return gcode
 
     def end_gcode(self):
         """
@@ -3283,7 +3309,11 @@ class CNCjob(Geometry):
                                  tooldia=None,
                                  tolerance=0,
                                  multidepth=False,
-                                 depthpercut=None):
+                                 depthpercut=None,
+                                 toolchange=False,
+                                 toolchangez=None,
+                                 toolnumber=1,
+                                 toolname=None):
         """
         Second algorithm to generate from Geometry.
 
@@ -3298,6 +3328,8 @@ class CNCjob(Geometry):
         :param multidepth: If True, use multiple passes to reach
            the desired depth.
         :param depthpercut: Maximum depth in each pass.
+        :param toolchange: Start with a tool change to tool ``toolnumber``
+            (``toolname``, if given, shown in its message), at ``toolchangez``.
         :return: None
         """
         assert isinstance(geometry, Geometry), \
@@ -3334,16 +3366,14 @@ class CNCjob(Geometry):
             self.gcode = ""
 
         # Initial G-Code
-        self.gcode = self.unitcode[self.units.upper()] + "\n"
-        self.gcode += self.absolutecode + "\n"
-        self.gcode += self.feedminutecode + "\n"
-        self.gcode += "F%.2f\n" % self.feedrate
-        self.gcode += "G00 Z%.4f\n" % self.z_move  # Move (up) to travel height
-        if self.spindlespeed is not None:
-            self.gcode += "M03 S%d\n" % int(self.spindlespeed)  # Spindle start with configured speed
+        self.gcode = self.start_gcode()
+        if toolchange:
+            self.gcode += self.toolchange_gcode(toolnumber, self.tooldia, toolchangez,
+                                                self.spindlespeed, name=toolname)
         else:
-            self.gcode += "M03\n"  # Spindle start
-        #self.gcode += self.pausecode + "\n"
+            self.gcode += "G00 Z%.4f\n" % self.z_move  # Move (up) to travel height
+            self.gcode += self.spindle_gcode(self.spindlespeed)
+        self.gcode += "G01 F%.2f\n" % self.feedrate
 
         ## Iterate over geometry paths getting the nearest each time.
         log.debug("Starting G-Code...")

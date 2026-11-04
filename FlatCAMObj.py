@@ -1109,9 +1109,8 @@ class FlatCAMExcellon(FlatCAMObj, Excellon):
                         for d in self.drills if d["tool"] in plan])
             tool_params = {slot[b["id"]]: b for b in bits}
             tools = [slot[b["id"]] for b in bits]
-            if len(bits) > 1 and not toolchange:
-                toolchange = True
-                self.app.inform.emit("Tool change turned on: drilling needs %d drill bits." % len(bits))
+            # Each drill bit is fitted at a tool change, the first one included
+            toolchange = True
             if warnings:
                 self.app.inform.emit("[warning] No drill bit close in size for: " + "; ".join(warnings))
 
@@ -1437,7 +1436,9 @@ class FlatCAMCNCjob(FlatCAMObj, CNCjob):
         text = ""
         if comments:
             text += "\n".join(self.header_comments()) + "\n"
-        text += preamble + "\n" + "".join(lines) + postamble
+        # Jobs generated (or saved in projects) before coordinates were
+        # spaced are spaced now
+        text += preamble + "\n" + gcode_spaced("".join(lines)) + postamble
 
         # Plain ASCII only, typed-in text included: machine controllers can
         # hang on anything else
@@ -1456,7 +1457,7 @@ class FlatCAMCNCjob(FlatCAMObj, CNCjob):
 
     def get_gcode(self, preamble='', postamble=''):
         #we need this to beable get_gcode separatelly for shell command export_code
-        return gcode_ascii(preamble + '\n' + self.gcode + "\n" + postamble)
+        return gcode_ascii(preamble + '\n' + gcode_spaced(self.gcode) + "\n" + postamble)
 
     def on_plot_cb_click(self, *args):
         if self.muted_ui:
@@ -1869,10 +1870,16 @@ class FlatCAMGeometry(FlatCAMObj, Geometry):
                                 "multidepth": bool(multidepth), "depthperpass": depthperpass}
             app_obj.progress.emit(40)
             # TODO: The tolerance should not be hard coded. Just for testing.
+            # Start with a tool change at the job's end height, so the bit
+            # can be fitted and Z zeroed for it
             job_obj.generate_from_geometry_2(self,
+                                             tooldia=tooldia,
                                              multidepth=multidepth,
                                              depthpercut=depthperpass,
-                                             tolerance=0.0005)
+                                             tolerance=0.0005,
+                                             toolchange=True,
+                                             toolchangez=max(job_obj.z_end or z_move, z_move),
+                                             toolname=self.options["toolname"] or None)
 
             app_obj.progress.emit(50)
             job_obj.gcode_parse()
