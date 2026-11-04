@@ -153,6 +153,46 @@ class NCExportTestCase(unittest.TestCase):
             job.on_exportgcode_button_click()
         self.assertEqual(os.listdir(self.tmpdir), [])
 
+    def test_output_is_plain_ascii(self):
+        self.tool["name"] = "V-bit 30° Ø0.1mm – fine"
+        job = self.isolation_job()
+        path = os.path.join(self.tmpdir, "ascii.nc")
+        job.export_gcode(path, preamble="(résumé)", comments=True)
+        with open(path, "rb") as f:
+            data = f.read()
+        self.assertTrue(all(b < 128 for b in data), "non-ASCII byte in output")
+        self.assertIn(b"(TOOL: V-bit 30deg dia 0.1mm  fine)", data)
+
+    def test_drill_change_message_is_plain_ascii(self):
+        for bit in self.library.drill_bits():
+            bit["name"] = "Drill %g mm (carbide)°" % bit["dia"]
+        self.fc.open_excellon('tests/excellon_files/case1.drl')
+        exc = self.fc.collection.get_by_name('case1.drl')
+        self.fc.collection.set_active('case1.drl')
+        exc.ui.tools_table.selectAll()
+        exc.on_create_cncjob_button_click()
+        gcode = self.wait_for('case1.drl_cnc').gcode
+        msgs = [l for l in gcode.splitlines() if l.startswith("(MSG")]
+        self.assertTrue(msgs)
+        for line in msgs:
+            self.assertTrue(line.isascii())
+            self.assertEqual(line.count("("), 1)
+            self.assertEqual(line.count(")"), 1)
+
+    def test_old_saved_coordinate_format_is_replaced(self):
+        import json
+        from camlib import CNCjob
+        data_path = os.path.join(self.tmpdir, "profile")
+        os.makedirs(data_path)
+        with open(os.path.join(data_path, "defaults.json"), "w") as f:
+            json.dump({"cncjob_coordinate_format": "X%.4fY%.4f", "units": "MM"}, f)
+        self.fc.data_path = data_path
+        self.fc.load_defaults()
+        self.fc.propagate_defaults()
+        self.assertEqual(self.fc.defaults["cncjob_coordinate_format"], "X%.4f Y%.4f")
+        self.assertEqual(CNCjob.defaults["coordinate_format"], "X%.4f Y%.4f")
+        self.assertEqual(self.fc.defaults["units"], "MM")
+
     def test_job_from_older_project_still_exports(self):
         job = self.isolation_job()
         saved = job.to_dict()

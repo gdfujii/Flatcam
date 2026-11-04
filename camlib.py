@@ -15,6 +15,7 @@ from numpy import arctan2, inf, array, sqrt, pi, ceil, sin, cos, dot, float32, \
 from numpy.linalg import solve, norm
 from matplotlib.figure import Figure
 import math
+import unicodedata
 import re
 import sys
 import traceback
@@ -69,6 +70,16 @@ log.addHandler(handler)
 
 class ParseError(Exception):
     pass
+
+
+def gcode_comment_text(text):
+    """
+    ``text`` made safe inside a G-code comment: plain ASCII (controllers can
+    hang on other bytes), with no parentheses to end the comment early.
+    """
+    text = text.replace("°", "deg").replace("µ", "u").replace("Ø", "dia ")
+    text = unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode("ascii")
+    return "".join(c for c in text if " " <= c <= "~").replace("(", "[").replace(")", "]")
 
 
 class Geometry(object):
@@ -3212,7 +3223,8 @@ class CNCjob(Geometry):
                     gcode += "M5\n"  # Spindle Stop
                     gcode += "M6\n"  # Tool change
                     if "name" in params:
-                        gcode += "(MSG, Change to %s, dia=%.4f)\n" % (params["name"], exobj.tools[tool]["C"])
+                        gcode += "(MSG, Change to %s, dia=%.4f)\n" % (gcode_comment_text(params["name"]),
+                                                                      exobj.tools[tool]["C"])
                     else:
                         gcode += "(MSG, Change to tool dia=%.4f)\n" % exobj.tools[tool]["C"]
                     gcode += "M0\n"  # Temporary machine stop

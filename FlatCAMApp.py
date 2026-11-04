@@ -972,6 +972,10 @@ class App(QtCore.QObject):
             App.log.error(str(e))
             self.inform.emit("ERROR: Failed to parse defaults file.")
             return
+        # Settings saved by older versions keep the old coordinate format,
+        # which runs X and Y together. It was never a user choice.
+        if defaults.get("cncjob_coordinate_format") == "X%.4fY%.4f":
+            del defaults["cncjob_coordinate_format"]
         self.defaults.update(defaults)
 
     def on_tool_library_changed(self):

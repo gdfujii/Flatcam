@@ -1381,8 +1381,7 @@ class FlatCAMCNCjob(FlatCAMObj, CNCjob):
 
         if info.get("type") != "Excellon":
             lines.append("Spindle Speed: %s" % self._rpm(self.spindlespeed))
-        # As comments. Parentheses inside one would end it early.
-        return ["(%s)" % l.replace("(", "[").replace(")", "]") if l else "" for l in lines]
+        return ["(%s)" % gcode_comment_text(l) if l else "" for l in lines]
 
     @staticmethod
     def _rpm(speed):
@@ -1435,7 +1434,8 @@ class FlatCAMCNCjob(FlatCAMObj, CNCjob):
             lines = self.dwell_generator(lines)
 
         ## Write
-        with open(filename, 'w') as f:
+        # Plain ASCII: machine controllers can hang on anything else
+        with open(filename, 'w', encoding='ascii', errors='replace') as f:
             if comments:
                 f.write("\n".join(self.header_comments()) + "\n")
             f.write(preamble + "\n")

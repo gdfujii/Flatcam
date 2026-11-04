@@ -101,6 +101,14 @@ cutout and CNC jobs.
   count, plunge rate and speed. The G-code itself is unchanged. Unlike older
   FlatCAM output there is no "MACH3 preprocessor" comment, which never
   matched what was written.
+- **Plain ASCII output.** Exported files contain only plain ASCII. A `°` in
+  a tool name, written as a single non-ASCII byte, made the Cubiko hang. It
+  is now written as `deg`, other accented or special characters are
+  simplified or dropped, and parentheses become brackets. This covers the
+  comments, the drill-change `(MSG, …)` lines and any prepend/append text.
+- **Old coordinate format replaced.** Settings saved by earlier versions kept
+  the run-together `X…Y…` coordinate format, which overrode the spaced one.
+  It is now replaced when the settings load.
 - **Spaced coordinates.** Moves are written `G01 X1.0000 Y2.0000` rather
   than `G01 X1.0000Y2.0000`, as most controllers and senders expect.
 
