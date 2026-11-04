@@ -1434,17 +1434,20 @@ class FlatCAMCNCjob(FlatCAMObj, CNCjob):
             lines = self.dwell_generator(lines)
 
         ## Write
-        # Plain ASCII: machine controllers can hang on anything else
-        with open(filename, 'w', encoding='ascii', errors='replace') as f:
-            if comments:
-                f.write("\n".join(self.header_comments()) + "\n")
-            f.write(preamble + "\n")
+        text = ""
+        if comments:
+            text += "\n".join(self.header_comments()) + "\n"
+        text += preamble + "\n" + "".join(lines) + postamble
 
-            for line in lines:
-
-                f.write(line)
-
-            f.write(postamble)
+        # Plain ASCII only, typed-in text included: machine controllers can
+        # hang on anything else
+        ascii_text = gcode_ascii(text)
+        if ascii_text != text:
+            self.app.inform.emit("[warning] Characters other than plain ASCII were changed "
+                                 "or left out of %s (check the prepended and appended G-code)."
+                                 % os.path.basename(filename))
+        with open(filename, 'w', encoding='ascii') as f:
+            f.write(ascii_text)
 
         # Just for adding it to the recent files list.
         self.app.file_opened.emit("cncjob", filename)
@@ -1453,7 +1456,7 @@ class FlatCAMCNCjob(FlatCAMObj, CNCjob):
 
     def get_gcode(self, preamble='', postamble=''):
         #we need this to beable get_gcode separatelly for shell command export_code
-        return preamble + '\n' + self.gcode + "\n" + postamble
+        return gcode_ascii(preamble + '\n' + self.gcode + "\n" + postamble)
 
     def on_plot_cb_click(self, *args):
         if self.muted_ui:

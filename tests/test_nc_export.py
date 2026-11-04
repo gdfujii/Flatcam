@@ -153,15 +153,57 @@ class NCExportTestCase(unittest.TestCase):
             job.on_exportgcode_button_click()
         self.assertEqual(os.listdir(self.tmpdir), [])
 
+    def assert_ascii(self, path):
+        with open(path, "rb") as f:
+            data = f.read()
+        bad = [b for b in data if not (32 <= b < 127 or b in b"\r\n\t")]
+        self.assertEqual(bad, [], "bytes other than plain ASCII in %s" % path)
+        return data
+
     def test_output_is_plain_ascii(self):
         self.tool["name"] = "V-bit 30° Ø0.1mm – fine"
         job = self.isolation_job()
         path = os.path.join(self.tmpdir, "ascii.nc")
-        job.export_gcode(path, preamble="(résumé)", comments=True)
-        with open(path, "rb") as f:
-            data = f.read()
-        self.assertTrue(all(b < 128 for b in data), "non-ASCII byte in output")
-        self.assertIn(b"(TOOL: V-bit 30deg dia 0.1mm  fine)", data)
+        job.export_gcode(path, comments=True)
+        data = self.assert_ascii(path)
+        self.assertIn(b"(TOOL: V-bit 30deg dia 0.1mm - fine)", data)
+
+    def test_prepended_and_appended_gcode_are_plain_ascii(self):
+        messages = []
+        self.fc.inform.connect(messages.append)
+        job = self.isolation_job()
+        job.options["dwell"] = True  # The other way the G-code is written
+        path = os.path.join(self.tmpdir, "typed.nc")
+        job.export_gcode(path, preamble="(Start: résumé 中)\nG00 Z5 ",
+                         postamble="M05 (Done — 25°C)\nM30\n", comments=True)
+        data = self.assert_ascii(path)
+        self.assertIn(b"(Start: resume )", data)
+        self.assertIn(b"G00 Z5 ", data)
+        self.assertIn(b"M05 (Done - 25degC)", data)
+        self.assertTrue(data.rstrip().endswith(b"M30"))
+        self.assertIn(b"G4 P", data)
+        self.assertTrue(any("plain ASCII" in m for m in messages))
+
+    def test_plain_ascii_text_is_kept_exactly_and_no_warning(self):
+        messages = []
+        self.fc.inform.connect(messages.append)
+        job = self.isolation_job()
+        job.options["dwell"] = False  # Written exactly as generated
+        path = os.path.join(self.tmpdir, "plain.gcode")
+        job.export_gcode(path, preamble="G90\t(abs)", postamble="M30\n")
+        with open(path) as f:
+            self.assertEqual(f.read(), "G90\t(abs)\n" + job.gcode + "M30\n")
+        self.assertFalse(any("plain ASCII" in m for m in messages))
+
+    def test_shell_write_gcode_is_plain_ascii(self):
+        job = self.isolation_job()
+        path = os.path.join(self.tmpdir, "shell.gcode")
+        self.fc.exec_command_test('write_gcode "%s" "%s" -preamble "(° start)" -postamble "(end é)"'
+                                  % (job.options["name"], path.replace("\\", "/")))
+        data = self.assert_ascii(path)
+        self.assertIn(b"(deg start)", data)
+        self.assertIn(b"(end e)", data)
+        self.assertTrue(job.get_gcode("(°)", "").isascii())
 
     def test_drill_change_message_is_plain_ascii(self):
         for bit in self.library.drill_bits():

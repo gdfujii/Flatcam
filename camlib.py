@@ -72,14 +72,31 @@ class ParseError(Exception):
     pass
 
 
+# Characters with a common ASCII spelling that NFKD normalization doesn't give
+ASCII_SPELLINGS = {"°": "deg", "µ": "u", "Ø": "dia ", "ø": "dia ",
+                   "±": "+/-", "×": "x", "–": "-", "—": "-",
+                   "‘": "'", "’": "'", "“": '"', "”": '"'}
+
+
+def gcode_ascii(text):
+    """
+    ``text`` as plain printable ASCII, keeping line breaks and tabs: machine
+    controllers can hang on any other byte. Characters are spelled in ASCII
+    where possible (accents dropped, a degree sign as "deg"), and left out
+    otherwise.
+    """
+    text = "".join(ASCII_SPELLINGS.get(c, c) for c in text)
+    text = unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode("ascii")
+    return "".join(c for c in text if " " <= c <= "~" or c in "\r\n\t")
+
+
 def gcode_comment_text(text):
     """
-    ``text`` made safe inside a G-code comment: plain ASCII (controllers can
-    hang on other bytes), with no parentheses to end the comment early.
+    ``text`` made safe inside a one-line G-code comment: plain ASCII, on one
+    line, with no parentheses to end the comment early.
     """
-    text = text.replace("°", "deg").replace("µ", "u").replace("Ø", "dia ")
-    text = unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode("ascii")
-    return "".join(c for c in text if " " <= c <= "~").replace("(", "[").replace(")", "]")
+    text = " ".join(gcode_ascii(text).split("\n")).replace("\r", "").replace("\t", " ")
+    return text.replace("(", "[").replace(")", "]")
 
 
 class Geometry(object):

@@ -1908,9 +1908,10 @@ class App(QtCore.QObject):
         :return: None
         """
         obj = self.collection.get_by_name(obj_name)
-        text = obj.to_excellon(comments=["Exported by FlatCAM %s from %s" % (self.version, obj_name)])
+        text = gcode_ascii(obj.to_excellon(
+            comments=["Exported by FlatCAM %s from %s" % (self.version, obj_name)]))
         try:
-            with open(filename, "w") as f:
+            with open(filename, "w", encoding="ascii") as f:
                 f.write(text)
         except IOError as e:
             self.inform.emit("[error] Failed to write %s: %s" % (filename, e))

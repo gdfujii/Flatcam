@@ -104,8 +104,12 @@ cutout and CNC jobs.
 - **Plain ASCII output.** Exported files contain only plain ASCII. A `°` in
   a tool name, written as a single non-ASCII byte, made the Cubiko hang. It
   is now written as `deg`, other accented or special characters are
-  simplified or dropped, and parentheses become brackets. This covers the
-  comments, the drill-change `(MSG, …)` lines and any prepend/append text.
+  simplified or dropped, and parentheses inside a comment become brackets.
+  The whole file is checked as it is written, including the drill-change
+  `(MSG, …)` lines and G-code typed into "Prepend to G-Code" / "Append to
+  G-Code" or passed to the shell's `write_gcode`. A warning names the file
+  when typed text had to be changed. Joined drill files exported with File →
+  Export Excellon are plain ASCII too.
 - **Old coordinate format replaced.** Settings saved by earlier versions kept
   the run-together `X…Y…` coordinate format, which overrode the spaced one.
   It is now replaced when the settings load.
